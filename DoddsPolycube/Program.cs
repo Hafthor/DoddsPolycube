@@ -13,7 +13,7 @@ using System.Diagnostics;
 
 internal class Program
 {
-    private static int n = 23; //number of polycube cells. Need n >= 4 if single threading, or n >= filterDepth >= 5 if multithreading (I think)
+    private static int n = 16; //number of polycube cells. Need n >= 4 if single threading, or n >= filterDepth >= 5 if multithreading (I think)
 
     private static int Main(string[] args)
     {
@@ -68,7 +68,7 @@ internal class Program
                 int sym = e.sym, y = e.y, x = e.x;
                 int i = 1 - n + y, j = 1 - n + Math.Abs(i) + x;
                 string fileName = $"{n}-{sym}_{i}_{j}.txt";
-                long sc = CountSymmetricPolycubes(matrixReps[sym], new int[3] { i * affine1[sym][0] + j * affine2[sym][0] + biases[sym][0], i * affine1[sym][1] + j * affine2[sym][1] + biases[sym][1], i * affine1[sym][2] + j * affine2[sym][2] + biases[sym][2] });
+                long sc = CountSymmetricPolycubes(matrixReps[sym], [i * affine1[sym][0] + j * affine2[sym][0] + biases[sym][0], i * affine1[sym][1] + j * affine2[sym][1] + biases[sym][1], i * affine1[sym][2] + j * affine2[sym][2] + biases[sym][2]]);
                 done[sym, y, x] = true;
                 File.WriteAllText(fileName, $"{sc} {sw.Elapsed + highestTime}");
                 Interlocked.Add(ref subcounts[sym], sc);
@@ -81,11 +81,11 @@ internal class Program
             {
                 long sc = subcounts[sym];
                 Console.WriteLine($"{sc:N0} polycubes fixed under each {descriptions[sym]} * {autClassSizes[sym]} = {autClassSizes[sym] * sc:N0}");
-                count += autClassSizes[sym] * sc;
             }
             sw.Stop();
             Console.WriteLine($"{count:N0} total count for non-trivial symmetries for polycubes with {n} cells, {count / 24:N0} free polycubes");
             totalTime += sw.Elapsed + highestTime;
+            count += subcount;
         }
         Console.WriteLine();
         {
@@ -233,6 +233,7 @@ internal class Program
                     requiredCells.Remove((tempX, tempY, tempZ));
                 }
             }
+
             while (extensionStack.Count != originalLength)
                 extensionStack.Push(recoveryStack.Pop());
             return count;

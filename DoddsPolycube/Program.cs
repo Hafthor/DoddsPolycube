@@ -28,7 +28,7 @@
 // 16		        59,795,121,480 ## 6.1+38.8 = 44.9
 // 17		       457,409,613,979 ## 15.6+4:51.4 = 5:07.0 
 // 18		     3,516,009,200,564 ## 55.2+37:35.9 = 38:31.0
-// 19		    27,144,143,923,583 ## 2:24.6+
+// 19		    27,144,143,923,583 ## 2:23.4+04:59:14.4 = 05:01:37.8
 // 20		   210,375,361,379,518
 // 21		 1,636,229,771,639,924
 // 22		12,766,882,202,755,783  ##  x24 = 312e15 (ulong limit is 18.44e18)
@@ -43,11 +43,12 @@ using System.Diagnostics;
 // using System.Numerics; // for BigInteger
 
 public static class Program {
-    // number of polycube cells. Need n >= 4 if single threading, or n >= filterDepth >= 5 if multithreading (I think)
-    private const int N = 16; // make sure num is big enough for n
-    private const int FilterDepth = 5;
+    private const int N = 16; // number of polycube cells. Need N >= 6 and > FilterDepth 
+    // make sure type Num is big enough for a(N) * 24
+    private const int FilterDepth = 5; // >=5 && <N
 
     private static void Main() {
+        if (N < 6) throw new InvalidOperationException("N must be at least 6");
         if (FilterDepth >= N) throw new InvalidOperationException("FilterDepth must be less than N");
         if (FilterDepth < 5) throw new InvalidOperationException("FilterDepth must be at least 5 for multithreading");
         string numType = typeof(Num).Name;
@@ -94,9 +95,6 @@ public static class Program {
             int spindex = 0;
             const string spinner = @"|/-\";
             
-            Console.WriteLine("Phase 1/2: started nontrivial symmetries - {0} tasks - start time: {1}",
-                tasks.Count, DateTime.Now);
-
             for (int sym = 0; sym < 4; sym++) {
                 int[] a1 = affine1[sym], a2 = affine2[sym], b = biases[sym];
                 for (int i = 1 - N; i <= N - 1; i++) {
@@ -115,6 +113,9 @@ public static class Program {
                     }
                 }
             }
+
+            Console.WriteLine("Phase 1/2: started nontrivial symmetries - {0} tasks - start time: {1}",
+                tasks.Count, DateTime.Now);
 
             Task.WhenAll(tasks).Wait();
 
@@ -301,10 +302,66 @@ public static class Program {
                     if (++*(index + X) == 0) *stackTopInner++ = index + X;
                     if (++*(index + Y) == 0) *stackTopInner++ = index + Y;
                     if (++*(index + Z) == 0) *stackTopInner++ = index + Z;
-                    
-                    if (depth == 4)
-                        count += (Num)CountFinalExtensions(stackTopInner);
-                    else if (depth != FilterDepth || stackTop1 - refStack == filter)
+
+                    if (depth == 4) {
+                        byte** stackTop = stackTopInner;
+                        const int X2 = X + X,
+                            Y2 = Y + Y,
+                            Z2 = Z + Z,
+                            sYX = Y + X,
+                            sZX = Z + X,
+                            sZY = Z + Y,
+                            dYX = Y - X,
+                            dZX = Z - X,
+                            dZY = Z - Y;
+                        int length = (int)(stackTop - refStack);
+                        count += length * (length - 1) * (length - 2) / 6;
+                        byte** stackTopTemp = stackTop;
+                        for (int lengthPlus = (length << 1) - 511; stackTopTemp != refStack;) {
+                            byte* i = *--stackTopTemp;
+                            int neighbours = 0, subCount = 128;
+                            if (*(i - X) > 127) {
+                                count += --*(i - X);
+                                neighbours++;
+                                subCount += *(i - X2) + *(i - sYX) + *(i - sZX) + *(i + dYX) + *(i + dZX);
+                            }
+                            if (*(i - Y) > 127) {
+                                count += --*(i - Y);
+                                neighbours++;
+                                subCount += *(i - Y2) + *(i - sYX) + *(i - sZY) + *(i - dYX) + *(i + dZY);
+                            }
+                            if (*(i - Z) > 127) {
+                                count += --*(i - Z);
+                                neighbours++;
+                                subCount += *(i - Z2) + *(i - sZX) + *(i - sZY) + *(i - dZX) + *(i - dZY);
+                            }
+                            if (*(i + X) > 127) {
+                                count += --*(i + X);
+                                neighbours++;
+                                subCount += *(i + X2) + *(i + sYX) + *(i + sZX) + *(i - dYX) + *(i - dZX);
+                            }
+                            if (*(i + Y) > 127) {
+                                count += --*(i + Y);
+                                neighbours++;
+                                subCount += *(i + Y2) + *(i + sYX) + *(i + sZY) + *(i + dYX) + *(i - dZY);
+                            }
+                            if (*(i + Z) > 127) {
+                                count += --*(i + Z);
+                                neighbours++;
+                                subCount += *(i + Z2) + *(i + sZX) + *(i + sZY) + *(i + dZX) + *(i + dZY);
+                            }
+                            count += (subCount >> 8) + (neighbours * (neighbours + lengthPlus) >> 1);
+                        }
+                        while (stackTop != refStack) {
+                            byte* i = *--stackTop;
+                            *(i - X) |= (byte)(*(i - X) >> 4);
+                            *(i - Y) |= (byte)(*(i - Y) >> 4);
+                            *(i - Z) |= (byte)(*(i - Z) >> 4);
+                            *(i + X) |= (byte)(*(i + X) >> 4);
+                            *(i + Y) |= (byte)(*(i + Y) >> 4);
+                            *(i + Z) |= (byte)(*(i + Z) >> 4);
+                        }
+                    }  else if (depth != FilterDepth || stackTop1 - refStack == filter)
                         // if multithreading is not wanted, remove "if (condition)" from this else statement
                         count += CountExtensions(depth - 1, stackTopInner, stackTop2);
                     
@@ -320,66 +377,6 @@ public static class Program {
                 }
                 while (stackTop1 != stackTopOriginal)
                     *stackTop1++ = *stackTop2++;
-                return count;
-            }
-
-            int CountFinalExtensions(byte** stackTop) {
-                const int X2 = X + X,
-                    Y2 = Y + Y,
-                    Z2 = Z + Z,
-                    sYX = Y + X,
-                    sZX = Z + X,
-                    sZY = Z + Y,
-                    dYX = Y - X,
-                    dZX = Z - X,
-                    dZY = Z - Y;
-                int length = (int)(stackTop - refStack);
-                int count = length * (length - 1) * (length - 2) / 6;
-                byte** stackTopTemp = stackTop;
-                for (int lengthPlus = (length << 1) - 511; stackTopTemp != refStack;) {
-                    byte* i = *--stackTopTemp;
-                    int neighbours = 0, subCount = 128;
-                    if (*(i - X) > 127) {
-                        count += --*(i - X);
-                        neighbours++;
-                        subCount += *(i - X2) + *(i - sYX) + *(i - sZX) + *(i + dYX) + *(i + dZX);
-                    }
-                    if (*(i - Y) > 127) {
-                        count += --*(i - Y);
-                        neighbours++;
-                        subCount += *(i - Y2) + *(i - sYX) + *(i - sZY) + *(i - dYX) + *(i + dZY);
-                    }
-                    if (*(i - Z) > 127) {
-                        count += --*(i - Z);
-                        neighbours++;
-                        subCount += *(i - Z2) + *(i - sZX) + *(i - sZY) + *(i - dZX) + *(i - dZY);
-                    }
-                    if (*(i + X) > 127) {
-                        count += --*(i + X);
-                        neighbours++;
-                        subCount += *(i + X2) + *(i + sYX) + *(i + sZX) + *(i - dYX) + *(i - dZX);
-                    }
-                    if (*(i + Y) > 127) {
-                        count += --*(i + Y);
-                        neighbours++;
-                        subCount += *(i + Y2) + *(i + sYX) + *(i + sZY) + *(i + dYX) + *(i - dZY);
-                    }
-                    if (*(i + Z) > 127) {
-                        count += --*(i + Z);
-                        neighbours++;
-                        subCount += *(i + Z2) + *(i + sZX) + *(i + sZY) + *(i + dZX) + *(i + dZY);
-                    }
-                    count += (subCount >> 8) + (neighbours * (neighbours + lengthPlus) >> 1);
-                }
-                while (stackTop != refStack) {
-                    byte* i = *--stackTop;
-                    *(i - X) |= (byte)(*(i - X) >> 4);
-                    *(i - Y) |= (byte)(*(i - Y) >> 4);
-                    *(i - Z) |= (byte)(*(i - Z) >> 4);
-                    *(i + X) |= (byte)(*(i + X) >> 4);
-                    *(i + Y) |= (byte)(*(i + Y) >> 4);
-                    *(i + Z) |= (byte)(*(i + Z) >> 4);
-                }
                 return count;
             }
         }

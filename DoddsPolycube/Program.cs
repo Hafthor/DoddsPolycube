@@ -23,17 +23,17 @@
 // 11		             2,522,522
 // 12		            18,598,427  ##  x24 = 446,362,248 (int limit is 2.1e9)
 // 13		           138,462,649  ##  x24 = 3,322,710,384 (uint limit is 4.3e9)
-// 14		         1,039,496,297
-// 15		         7,859,514,470
-// 16		        59,795,121,480 ## 6.1+38.8 = 44.9
-// 17		       457,409,613,979 ## 15.6+4:51.4 = 5:07.0 
-// 18		     3,516,009,200,564 ## 55.2+37:35.9 = 38:31.0
-// 19		    27,144,143,923,583 ## 2:23.4+04:59:14.4 = 05:01:37.8
-// 20		   210,375,361,379,518
-// 21		 1,636,229,771,639,924
-// 22		12,766,882,202,755,783  ##  x24 = 312e15 (ulong limit is 18.44e18)
-// 23 est   99.9027e15  ##  x24 = 2.39766e18 (ulong is big enough)
-// 24 est  783.7570e15  ##  x24 = 18.8102e18 (UInt128 limit is 3.4e36, ulong is not quite big enough)
+// 14		         1,039,496,297 ## 1.0+0.9 = 1.9s
+// 15		         7,859,514,470 ## 1.8+5.7 = 7.5s
+// 16		        59,795,121,480 ## 6.1+38.8 = 44.9s
+// 17		       457,409,613,979 ## 15+4:51 = 5:06 
+// 18		     3,516,009,200,564 ## 55+37:36 = 38:31
+// 19		    27,144,143,923,583 ## 2:23+04:59:14 = 05:01:38
+// 20		   210,375,361,379,518 ## 8:50+1d 15:10:45=1d 15:19:35
+// 21		 1,636,229,771,639,924 ## est. 12.7d
+// 22		12,766,882,202,755,783 ## est. 100d  ##  x24 = 312e15 (ulong limit is 18.44e18)
+// 23 est   99.9027e15 ## est. 2y  ##  x24 = 2.39766e18 (ulong is big enough)
+// 24 est  783.7570e15 ## est. 16y ##  x24 = 18.8102e18 (UInt128 limit is 3.4e36, ulong is not quite big enough)
 // 45 est    4.9048e36  ##  x24 = 117.715e36 (UInt128 is big enough)
 // 46 est   37.5306e36  ##  x24 = 900.735e36 (need to switch to BigInteger)
 
@@ -139,7 +139,7 @@ public static class Program {
             Stopwatch sw = Stopwatch.StartNew();
             // this is the maximum left stack length, which is the value being filtered to separate work
             int maxLeftStackLen = 4 * (N - FilterDepth) - 2;
-            var tasks = new Task<Num>[maxLeftStackLen + 1];
+            var tasks = new Action[maxLeftStackLen + 1];
             
             Console.WriteLine("Phase 2/2: started trivial symmetries - {0} tasks - start time: {1}",
                 tasks.Length, DateTime.Now);
@@ -147,29 +147,24 @@ public static class Program {
             Num subCount = 0;
             for (int j = 0, completed = 0; j < tasks.Length; j++) {
                 int filter = maxLeftStackLen--; // copy, since lambda expression captures the variable
-                tasks[j] = Task<Num>.Factory.StartNew(() => {
+                tasks[j] = () => {
                     Num count = CountExtensionsSubset(filter);
                     lock (tasks) {
                         completed++;
                         subCount += count;
                     }
                     Console.Write($"[{completed}/{tasks.Length}] subcount={subCount:N0} elapsed={
-                        sw.Elapsed}     \r");
-                    return count;
-                });
+                        sw.Elapsed} - #{filter}={count:N0}");
+                };
             }
 
-            Task.WhenAll(tasks).Wait();
+            Parallel.Invoke(tasks);;
 
-            Num subCount2 = 0;
-            foreach (var t in tasks)
-                subCount2 += t.Result;
-            
             Console.WriteLine(
                 "{0:N0} polycubes with {1} cells (number of polycubes fixed by trivial symmetry) - Elapsed: {2}",
-                subCount2, N, sw.Elapsed);
+                subCount, N, sw.Elapsed);
             
-            totalCount += subCount2;
+            totalCount += subCount;
         }
         
         Console.WriteLine();

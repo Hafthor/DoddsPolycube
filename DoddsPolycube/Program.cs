@@ -1,4 +1,6 @@
-﻿namespace DoddsPolycube;
+﻿using System.Text;
+
+namespace DoddsPolycube;
 
 // from https://oeis.org/A000162/a000162.cs.txt
 
@@ -37,17 +39,21 @@
 // 45 est    4.9048e36  ##  x24 = 117.715e36 (UInt128 is big enough)
 // 46 est   37.5306e36  ##  x24 = 900.735e36 (need to switch to BigInteger)
 
-using Num = long; // int, uint when n=13, ulong when n>=14, UInt128 when n>=24, BitInteger when n>45
+using Num = ulong; // int, uint when n=13, ulong when n>=14, UInt128 when n>=24, BitInteger when n>45
 
 using System.Diagnostics;
 // using System.Numerics; // for BigInteger
 
 public static class Program {
-    private const int N = 16; // number of polycube cells. Need N >= 6 and > FilterDepth 
+    private const int N = 23; // number of polycube cells. Need N >= 6 and > FilterDepth 
+
     // make sure type Num is big enough for a(N) * 24
     private const int FilterDepth = 5; // >=5 && <N
 
-    private static void Main() {
+    // this is the maximum left stack length, which is the value being filtered to separate work
+    private const int MaxLeftStackLen = 4 * (N - FilterDepth) - 2;
+
+    private static int Main(string[] args) {
         if (N < 6) throw new InvalidOperationException("N must be at least 6");
         if (FilterDepth >= N) throw new InvalidOperationException("FilterDepth must be less than N");
         if (FilterDepth < 5) throw new InvalidOperationException("FilterDepth must be at least 5 for multithreading");
@@ -58,7 +64,7 @@ public static class Program {
             "Int64" or "UInt64" => N <= 23,
             "Int128" or "UInt128" => N <= 45,
             "BigInteger" => true,
-            _ => false
+            _ => throw new InvalidOperationException($"Unknown Num type ({numType})")
         };
         if (!numTypeOk) throw new InvalidOperationException($"Num type ({numType}) is not big enough for N ({N})");
 
@@ -70,121 +76,163 @@ public static class Program {
            total count for nontrivial symmetries is 8,460,765 for polycubes with 16 cells - Elapsed: 00:01:56.8297006
          */
 
+        HashSet<int> include = [..args.Select(int.Parse)];
+        if (args.Length == 0)
+            Console.WriteLine($"You can specify which symmetries to include as arguments (0-{
+                MaxLeftStackLen}), (-1) for nontrivials");
+
         // enumerate the sum over the order 24 group of the size of the fix of each group element, and divide by 24
         // (Burnside's lemma)
         Num totalCount = 0;
-        Stopwatch swTotal = Stopwatch.StartNew();
-        {
-            Stopwatch sw = Stopwatch.StartNew();
-            string[] descriptions = [
-                "orthogonal order 2",
-                "orthogonal order 4",
-                "short diagonal order 2",
-                "long diagonal order 3"
-            ];
-            int[] autClassSizes = [3, 6, 6, 8];
-            int[][] matrixReps = [
-                [-1, 0, 0, 0, -1, 0, 0, 0, 1],
-                [0, -1, 0, 1, 0, 0, 0, 0, 1],
-                [0, 1, 0, 1, 0, 0, 0, 0, -1],
-                [0, 0, 1, 1, 0, 0, 0, 1, 0]
-            ], affine1 = [[1, 0, 0], [1, 0, 0], [1, -1, 0], [1, 0, -1]],
-                affine2 = [[0, 1, 0], [0, 1, 0], [0, 0, 1], [0, 1, -1]],
-                biases = [[2 * N, 2 * N, 0], [2 * N, 0, 0], [0, 0, 2], [N - 1, 0, 1 - N]];
-            List<Task<Num>> tasks = [];
-            int spindex = 0;
-            const string spinner = @"|/-\";
+        var swTotal = Stopwatch.StartNew();
+        if (include.Count == 0 || include.Contains(-1)) {
+            Console.WriteLine("Phase 1/2: started nontrivial symmetries");
             
-            for (int sym = 0; sym < 4; sym++) {
-                int[] a1 = affine1[sym], a2 = affine2[sym], b = biases[sym];
-                for (int i = 1 - N; i <= N - 1; i++) {
-                    for (int j = 1 - N + Math.Abs(i); j <= N - 1 - Math.Abs(i); j++) {
-                        var matrixRep = matrixReps[sym];
-                        var affineShift = new[] {
-                            i * a1[0] + j * a2[0] + b[0],
-                            i * a1[1] + j * a2[1] + b[1],
-                            i * a1[2] + j * a2[2] + b[2]};
-                        tasks.Add(Task<Num>.Factory.StartNew(() => {
-                            Num count = CountSymmetricPolycubes(matrixRep, affineShift);
-                            Interlocked.Increment(ref spindex);
-                            Console.Write($"{spinner[spindex % 4]}\b");
-                            return count;
-                        }));
+            var filename = $"nontrivial_{N}.txt";
+            if (File.Exists(filename)) {
+                var lines = File.ReadAllLines(filename);
+                var line0 = lines[0].Split(' ');
+                totalCount = Num.Parse(line0[0]);
+                //var elapsed = TimeSpan.Parse(line0[1]);
+                for (int i = 1; i < lines.Length; i++)
+                    Console.WriteLine(lines[i]);
+            } else {
+                Stopwatch sw = Stopwatch.StartNew();
+                string[] descriptions = [
+                    "orthogonal order 2",
+                    "orthogonal order 4",
+                    "short diagonal order 2",
+                    "long diagonal order 3"
+                ];
+                int[] autClassSizes = [3, 6, 6, 8];
+                int[][] matrixReps = [
+                        [-1, 0, 0, 0, -1, 0, 0, 0, 1],
+                        [0, -1, 0, 1, 0, 0, 0, 0, 1],
+                        [0, 1, 0, 1, 0, 0, 0, 0, -1],
+                        [0, 0, 1, 1, 0, 0, 0, 1, 0]
+                    ],
+                    affine1 = [[1, 0, 0], [1, 0, 0], [1, -1, 0], [1, 0, -1]],
+                    affine2 = [[0, 1, 0], [0, 1, 0], [0, 0, 1], [0, 1, -1]],
+                    biases = [[2 * N, 2 * N, 0], [2 * N, 0, 0], [0, 0, 2], [N - 1, 0, 1 - N]];
+                List<Action> tasks = [];
+
+                int completed = 0;
+                var subCounts = new Num[4];
+                var elapsed = TimeSpan.Zero;
+                for (int sym = 0; sym < 4; sym++) {
+                    int symCopy = sym;
+                    int[] a1 = affine1[sym], a2 = affine2[sym], b = biases[sym];
+                    for (int i = 1 - N; i <= N - 1; i++) {
+                        int iCopy = i;
+                        for (int j = 1 - N + Math.Abs(i); j <= N - 1 - Math.Abs(i); j++) {
+                            int[] matrixRep = matrixReps[sym],
+                                affineShift = [
+                                    i * a1[0] + j * a2[0] + b[0],
+                                    i * a1[1] + j * a2[1] + b[1],
+                                    i * a1[2] + j * a2[2] + b[2]
+                                ];
+                            int jCopy = j;
+                            tasks.Add(() => {
+                                var sw = Stopwatch.StartNew();
+                                var count = CountSymmetricPolycubes(matrixRep, affineShift);
+                                sw.Stop();
+                                lock (tasks) {
+                                    completed++;
+                                    subCounts[symCopy] += count;
+                                    elapsed += sw.Elapsed;
+                                }
+                                Console.Write($"{completed}/{tasks.Count} {symCopy},{iCopy},{jCopy}     \r");
+                            });
+                        }
                     }
+                }
+                
+                StringBuilder sb = new();
+                var s = $"Starting {tasks.Count} tasks - start time: {DateTime.Now}";
+                sb.AppendLine(s);
+                Console.WriteLine(s);
+                
+                Parallel.Invoke(tasks.ToArray());
+
+                for (int sym = 0; sym < 4; sym++) {
+                    Num subCount = subCounts[sym], subCountMul = subCount * (Num)autClassSizes[sym];
+                    s = $"    {sym}: {subCount:N0} polycubes fixed under each {descriptions[sym]} rotation - *{
+                        autClassSizes[sym]} = {subCountMul:N0}";
+                    sb.AppendLine(s);
+                    Console.WriteLine(s);
+                    
+                    totalCount += subCountMul;
+                }
+
+                s = $"total count for nontrivial symmetries is {totalCount:N0} for polycubes with {
+                    N} cells - Elapsed: {sw.Elapsed}, CPU time: {elapsed}";
+                sb.AppendLine(s);
+                Console.WriteLine(s);
+                
+                s = $"{totalCount} {sw.Elapsed}{Environment.NewLine}";
+                sb.Insert(0, s);
+                File.WriteAllText(filename, sb.ToString());
+            }
+        }
+        Console.WriteLine();
+        {
+            Console.WriteLine("Phase 2/2: started trivial symmetries");
+            var sw = Stopwatch.StartNew();
+            List<Action> tasks = [];
+            Num subCount = 0;
+            var cpuTime = TimeSpan.Zero;
+            for (int j = 0, completed = 0; j <= MaxLeftStackLen; j++) {
+                if (include.Count != 0 && !include.Contains(j)) continue;
+                var filename = $"trivial_{N}_{MaxLeftStackLen}_{j}.txt";
+                if (File.Exists(filename)) {
+                    var lines = File.ReadAllLines(filename);
+                    var line0 = lines[0].Split(' ');
+                    subCount += Num.Parse(line0[0]);
+                    var elapsed = TimeSpan.Parse(line0[1]);
+                    cpuTime += elapsed;
+                    for (int i = 1; i < lines.Length; i++)
+                        Console.WriteLine(lines[i]);
+                } else {
+                    int filter = j; // copy, since lambda expression captures the variable
+                    tasks.Add(() => {
+                        var sw = Stopwatch.StartNew();
+                        var count = CountExtensionsSubset(filter);
+                        sw.Stop();
+                        lock (tasks) {
+                            completed++;
+                            subCount += count;
+                            cpuTime += sw.Elapsed;
+                        }
+                        var s = $"[{completed}/{tasks.Count}] #{filter} count={count:N0} elapsed={sw.Elapsed}";
+                        File.WriteAllText(filename, $"{count} {sw.Elapsed}{Environment.NewLine}" + s);
+                        Console.WriteLine(s);
+                    });
                 }
             }
 
-            Console.WriteLine("Phase 1/2: started nontrivial symmetries - {0} tasks - start time: {1}",
-                tasks.Count, DateTime.Now);
+            Console.WriteLine($"Starting {tasks.Count} tasks - start time: {DateTime.Now}");
 
-            Task.WhenAll(tasks).Wait();
+            Parallel.Invoke(tasks.ToArray());
 
-            for (int sym = 0, taskIndex = 0; sym < 4; sym++) {
-                Num subCount = 0;
-                for (int i = 1 - N; i <= N - 1; i++)
-                    for (int j = 1 - N + Math.Abs(i); j <= N - 1 - Math.Abs(i); j++)
-                        subCount += tasks[taskIndex++].Result;
-                
-                Console.Write($"    {sym}: {subCount:N0} polycubes fixed under each {descriptions[sym]} rotation - ");
-                subCount *= autClassSizes[sym];
-                Console.WriteLine($"*{autClassSizes[sym]} = {subCount:N0}");
-                totalCount += subCount;
-            }
-            
-            Console.WriteLine("total: {0:N0} polycubes with {1} cells with nontrivial symmetries - Elapsed: {2}",
-                totalCount, N, sw.Elapsed);
-        }
-        Console.WriteLine();
-        {
-            Stopwatch sw = Stopwatch.StartNew();
-            // this is the maximum left stack length, which is the value being filtered to separate work
-            int maxLeftStackLen = 4 * (N - FilterDepth) - 2;
-            var tasks = new Action[maxLeftStackLen + 1];
-            
-            Console.WriteLine("Phase 2/2: started trivial symmetries - {0} tasks - start time: {1}",
-                tasks.Length, DateTime.Now);
-            
-            Num subCount = 0;
-            for (int j = 0, completed = 0; j < tasks.Length; j++) {
-                int filter = maxLeftStackLen--; // copy, since lambda expression captures the variable
-                tasks[j] = () => {
-                    Num count = CountExtensionsSubset(filter);
-                    lock (tasks) {
-                        completed++;
-                        subCount += count;
-                    }
-                    Console.Write($"[{completed}/{tasks.Length}] subcount={subCount:N0} elapsed={
-                        sw.Elapsed} - #{filter}={count:N0}");
-                };
-            }
+            Console.WriteLine($"{subCount:N0} polycubes with {
+                N} cells (number of polycubes fixed by trivial symmetry) - Elapsed: {sw.Elapsed}, CPU time: {cpuTime}");
 
-            Parallel.Invoke(tasks);;
-
-            Console.WriteLine(
-                "{0:N0} polycubes with {1} cells (number of polycubes fixed by trivial symmetry) - Elapsed: {2}",
-                subCount, N, sw.Elapsed);
-            
             totalCount += subCount;
         }
-        
-        Console.WriteLine();
-        totalCount /= 24;
-        Console.WriteLine("{0:N0} free polycubes with {1} cells - Elapsed: {2}", totalCount, N, swTotal.Elapsed);
+
+        if (include.Count == 0) {
+            Console.WriteLine();
+            totalCount /= 24;
+            Console.WriteLine($"{totalCount:N0} free polycubes with {N} cells - Elapsed: {swTotal.Elapsed}");
+        }
+        return 0;
     }
 
     private static Num CountSymmetricPolycubes(int[] linearMap, int[] affineShift) {
-        var adjacencyCounts = new byte[2 * N + 1, 2 * N + 1, N + 2];
-        int z = 0, y = 0, x;
-        for (; y < 2 * N + 1; y++)
-            for (x = 0; x < 2 * N + 1; x++)
-                adjacencyCounts[x, y, z] = 1;
-        for (z++, y = 0; y < N; y++)
-            for (x = 0; x < 2 * N + 1; x++)
-                adjacencyCounts[x, y, z] = 1;
-        // y = n;
-        for (x = 0; x <= N; x++)
-            adjacencyCounts[x, y, z] = 1;
-        
+        const int XMul = 1, YMul = 2 * N + 1, ZMul = YMul * (2 * N + 1);
+        var adjacencyCounts = new byte[(N + 2) * ZMul];
+        Array.Fill(adjacencyCounts, (byte)1, 0, ZMul + N * YMul + N + 1);
+
         HashSet<(int, int, int)> requiredCells = [];
         Stack<(int, int, int)> recoveryStack = new(), extensionStack = new();
         extensionStack.Push((N, N, 1));
@@ -217,21 +265,22 @@ public static class Program {
                     if (cellsToAdd == 0) count++;
                     else {
                         int innerOriginalLength = extensionStack.Count;
-                        if (adjacencyCounts[x - 1, y, z]++ == 0) extensionStack.Push((x - 1, y, z));
-                        if (adjacencyCounts[x, y - 1, z]++ == 0) extensionStack.Push((x, y - 1, z));
-                        if (adjacencyCounts[x, y, z - 1]++ == 0) extensionStack.Push((x, y, z - 1));
-                        if (adjacencyCounts[x + 1, y, z]++ == 0) extensionStack.Push((x + 1, y, z));
-                        if (adjacencyCounts[x, y + 1, z]++ == 0) extensionStack.Push((x, y + 1, z));
-                        if (adjacencyCounts[x, y, z + 1]++ == 0) extensionStack.Push((x, y, z + 1));
+                        int xyz = x * XMul + y * YMul + z * ZMul;
+                        if (adjacencyCounts[xyz - XMul]++ == 0) extensionStack.Push((x - 1, y, z));
+                        if (adjacencyCounts[xyz - YMul]++ == 0) extensionStack.Push((x, y - 1, z));
+                        if (adjacencyCounts[xyz - ZMul]++ == 0) extensionStack.Push((x, y, z - 1));
+                        if (adjacencyCounts[xyz + XMul]++ == 0) extensionStack.Push((x + 1, y, z));
+                        if (adjacencyCounts[xyz + YMul]++ == 0) extensionStack.Push((x, y + 1, z));
+                        if (adjacencyCounts[xyz + ZMul]++ == 0) extensionStack.Push((x, y, z + 1));
 
                         count += CountExtensions(cellsToAdd);
 
-                        --adjacencyCounts[x - 1, y, z];
-                        --adjacencyCounts[x, y - 1, z];
-                        --adjacencyCounts[x, y, z - 1];
-                        --adjacencyCounts[x + 1, y, z];
-                        --adjacencyCounts[x, y + 1, z];
-                        --adjacencyCounts[x, y, z + 1];
+                        --adjacencyCounts[xyz - XMul];
+                        --adjacencyCounts[xyz - YMul];
+                        --adjacencyCounts[xyz - ZMul];
+                        --adjacencyCounts[xyz + XMul];
+                        --adjacencyCounts[xyz + YMul];
+                        --adjacencyCounts[xyz + ZMul];
                         while (extensionStack.Count != innerOriginalLength)
                             extensionStack.Pop(); // maybe replace this w/ custom stack to avoid this loop
                     }
@@ -240,7 +289,7 @@ public static class Program {
                 if (existingRequirement) {
                     requiredCells.Add((x, y, z));
                     break; // this required cell will no longer be available in the extension stack,
-                           // so no more valid polycubes are possible in this branch
+                    // so no more valid polycubes are possible in this branch
                 }
 
                 for (int tempX = x, tempY = y, tempZ = z;;) {
@@ -276,7 +325,7 @@ public static class Program {
             byte** refStack = stackalloc byte*[(N - 2) * 4];
             // seeded with first index of the byte board as the only allowed extension
             *refStack = byteBoard += Z;
-            
+
             for (byte* i = byteBoard + (N + 1) * Z; --i != byteBoard;)
                 // the first Z + 1 bytes are disallowed extensions; first Z are less than the minimum,
                 // last 1 due to edge case of initial polycube having no neighbours
@@ -290,7 +339,7 @@ public static class Program {
                 while (stackTop1 != refStack) {
                     byte* index = *--stackTop1;
                     byte** stackTopInner = stackTop1;
-                    
+
                     if (++*(index - X) == 0) *stackTopInner++ = index - X;
                     if (++*(index - Y) == 0) *stackTopInner++ = index - Y;
                     if (++*(index - Z) == 0) *stackTopInner++ = index - Z;
@@ -310,7 +359,7 @@ public static class Program {
                             dZX = Z - X,
                             dZY = Z - Y;
                         int length = (int)(stackTop - refStack);
-                        count += length * (length - 1) * (length - 2) / 6;
+                        count += (Num)(length * (length - 1) * (length - 2) / 6);
                         byte** stackTopTemp = stackTop;
                         for (int lengthPlus = (length << 1) - 511; stackTopTemp != refStack;) {
                             byte* i = *--stackTopTemp;
@@ -345,7 +394,7 @@ public static class Program {
                                 neighbours++;
                                 subCount += *(i + Z2) + *(i + sZX) + *(i + sZY) + *(i + dZX) + *(i + dZY);
                             }
-                            count += (subCount >> 8) + (neighbours * (neighbours + lengthPlus) >> 1);
+                            count += (Num)((subCount >> 8) + (neighbours * (neighbours + lengthPlus) >> 1));
                         }
                         while (stackTop != refStack) {
                             byte* i = *--stackTop;
@@ -356,10 +405,10 @@ public static class Program {
                             *(i + Y) |= (byte)(*(i + Y) >> 4);
                             *(i + Z) |= (byte)(*(i + Z) >> 4);
                         }
-                    }  else if (depth != FilterDepth || stackTop1 - refStack == filter)
+                    } else if (depth != FilterDepth || stackTop1 - refStack == filter)
                         // if multithreading is not wanted, remove "if (condition)" from this else statement
                         count += CountExtensions(depth - 1, stackTopInner, stackTop2);
-                    
+
                     --*(index - X);
                     --*(index - Y);
                     --*(index - Z);

@@ -87,7 +87,7 @@ public static class Program {
         var swTotal = Stopwatch.StartNew();
         if (include.Count == 0 || include.Contains(-1)) {
             Console.WriteLine("Phase 1/2: started nontrivial symmetries");
-            
+
             var filename = $"nontrivial_{N}.txt";
             if (File.Exists(filename)) {
                 var lines = File.ReadAllLines(filename);
@@ -120,10 +120,8 @@ public static class Program {
                 var subCounts = new Num[4];
                 var elapsed = TimeSpan.Zero;
                 for (int sym = 0; sym < 4; sym++) {
-                    int symCopy = sym;
                     int[] a1 = affine1[sym], a2 = affine2[sym], b = biases[sym];
                     for (int i = 1 - N; i <= N - 1; i++) {
-                        int iCopy = i;
                         for (int j = 1 - N + Math.Abs(i); j <= N - 1 - Math.Abs(i); j++) {
                             int[] matrixRep = matrixReps[sym],
                                 affineShift = [
@@ -131,7 +129,7 @@ public static class Program {
                                     i * a1[1] + j * a2[1] + b[1],
                                     i * a1[2] + j * a2[2] + b[2]
                                 ];
-                            int jCopy = j;
+                            int symCopy = sym, iCopy = i, jCopy = j; // copy, since lambda expression captures variable
                             tasks.Add(() => {
                                 var sw = Stopwatch.StartNew();
                                 var count = CountSymmetricPolycubes(matrixRep, affineShift);
@@ -146,12 +144,12 @@ public static class Program {
                         }
                     }
                 }
-                
+
                 StringBuilder sb = new();
                 var s = $"Starting {tasks.Count} tasks - start time: {DateTime.Now}";
                 sb.AppendLine(s);
                 Console.WriteLine(s);
-                
+
                 Parallel.Invoke(tasks.ToArray());
 
                 for (int sym = 0; sym < 4; sym++) {
@@ -160,7 +158,7 @@ public static class Program {
                         autClassSizes[sym]} = {subCountMul:N0}";
                     sb.AppendLine(s);
                     Console.WriteLine(s);
-                    
+
                     totalCount += subCountMul;
                 }
 
@@ -168,9 +166,8 @@ public static class Program {
                     N} cells - Elapsed: {sw.Elapsed}, CPU time: {elapsed}";
                 sb.AppendLine(s);
                 Console.WriteLine(s);
-                
-                s = $"{totalCount} {sw.Elapsed}{Environment.NewLine}";
-                sb.Insert(0, s);
+
+                sb.Insert(0, $"{totalCount} {sw.Elapsed}{Environment.NewLine}");
                 File.WriteAllText(filename, sb.ToString());
             }
         }
@@ -188,8 +185,7 @@ public static class Program {
                     var lines = File.ReadAllLines(filename);
                     var line0 = lines[0].Split(' ');
                     subCount += Num.Parse(line0[0]);
-                    var elapsed = TimeSpan.Parse(line0[1]);
-                    cpuTime += elapsed;
+                    cpuTime += TimeSpan.Parse(line0[1]);
                     for (int i = 1; i < lines.Length; i++)
                         Console.WriteLine(lines[i]);
                 } else {

@@ -370,7 +370,7 @@ public static class Program {
                             if (*(i - X) > 127) {
                                 count += --*(i - X);
                                 neighbours++;
-                                subCount += *(i - X + X) + *(i - X - Y) + *(i - X - Z) + *(i - X + Y) + *(i - X + Z);
+                                subCount += *(i - X - X) + *(i - X - Y) + *(i - X - Z) + *(i - X + Y) + *(i - X + Z);
                             }
                             if (*(i - Y) > 127) {
                                 count += --*(i - Y);

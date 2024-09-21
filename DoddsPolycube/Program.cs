@@ -227,8 +227,8 @@ public static class Program {
     }
 
     private static Num CountSymmetricPolycubes(int[] linearMap, int[] affineShift) {
-        const int XMul = 1, YMul = 2 * N + 1, ZMul = YMul * (2 * N + 1);
-        var adjacencyCounts = new byte[(N + 2) * ZMul];
+        const int XMul = 1, YMul = 2 * N + 1, ZMul = YMul * (2 * N + 1), Size = (N + 2) * ZMul;
+        var adjacencyCounts = new byte[Size];
         Array.Fill(adjacencyCounts, (byte)1, 0, ZMul + N * YMul + N + 1);
 
         HashSet<(int, int, int)> requiredCells = [];
@@ -243,6 +243,7 @@ public static class Program {
             while (extensionStack.Count > 0) {
                 int x, y, z;
                 recoveryStack.Push((x, y, z) = extensionStack.Pop());
+                int xyz = x * XMul + y * YMul + z * ZMul;
 
                 bool existingRequirement = requiredCells.Remove((x, y, z));
                 if (!existingRequirement) {
@@ -263,7 +264,6 @@ public static class Program {
                     if (cellsToAdd == 0) count++;
                     else {
                         int innerOriginalLength = extensionStack.Count;
-                        int xyz = x * XMul + y * YMul + z * ZMul;
                         if (adjacencyCounts[xyz - XMul]++ == 0) extensionStack.Push((x - 1, y, z));
                         if (adjacencyCounts[xyz - YMul]++ == 0) extensionStack.Push((x, y - 1, z));
                         if (adjacencyCounts[xyz - ZMul]++ == 0) extensionStack.Push((x, y, z - 1));

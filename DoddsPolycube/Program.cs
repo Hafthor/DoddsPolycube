@@ -45,6 +45,7 @@ using System.Diagnostics;
 // using System.Numerics; // for BigInteger
 
 public static class Program {
+    // we specify N as a constant because it makes the program run slightly faster 
     private const int N = 16; // number of polycube cells. Need N >= 6 and > FilterDepth 
 
     // make sure type Num is big enough for a(N) * 24
@@ -76,22 +77,30 @@ public static class Program {
            total count for nontrivial symmetries is 8,460,765 for polycubes with 16 cells - Elapsed: 00:01:56.8297006
          */
 
-        HashSet<int> include = [..args.Select(int.Parse)];
+        HashSet<string> include = [..args];
         if (args.Length == 0) {
             Console.WriteLine($"You can specify which symmetries to include as arguments (0-{MaxLeftStackLen})");
-            Console.WriteLine("-1 for non-trivial symmetries. -2 for safe method on trivial symmetries (slower).");
-            Console.WriteLine("-3 to not load prior work. -4 to not save new work.");
+            Console.WriteLine("-1 for non-trivial symmetries.");
+            Console.WriteLine("--usesafe for safe method on trivial symmetries (slower).");
+            Console.WriteLine("--noload to not load prior work.");
+            Console.WriteLine("--nosave to not save new work.");
+            Console.WriteLine("--quiet to not print progress.");
+            Console.WriteLine("--nomulti to not use multithreading.");
+            Console.WriteLine();
         }
-        bool useSafe = include.Remove(-2); // remove so we can still do all, but with safe method
-        bool noLoad = include.Remove(-3); // remove so we can still do all, but without loading
-        bool noSave = include.Remove(-4); // remove so we can still do all, but without saving
+        // remove so we can still do all
+        bool useSafe = include.Remove("--usesafe");
+        bool noLoad = include.Remove("--noload");
+        bool noSave = include.Remove("--nosave"); 
+        bool quiet = include.Remove("--quiet");
+        bool noMulti = include.Remove("--nomulti");
 
         // enumerate the sum over the order 24 group of the size of the fix of each group element, and divide by 24
         // (Burnside's lemma)
         Num totalCount = 0;
         var swTotal = Stopwatch.StartNew();
-        if (include.Count == 0 || include.Contains(-1)) {
-            Console.WriteLine("Phase 1/2: started nontrivial symmetries");
+        if (include.Count == 0 || include.Contains("-1")) {
+            Console.WriteLine("Phase 1/2: nontrivial symmetries");
 
             var filename = $"nontrivial_{N}.txt";
             if (!noLoad && File.Exists(filename)) {
@@ -144,7 +153,8 @@ public static class Program {
                                     subCounts[symCopy] += count;
                                     elapsed += swCpu.Elapsed;
                                 }
-                                Console.Write($"{completed}/{tasks.Count} {symCopy},{iCopy},{jCopy}     \r");
+                                if (!quiet) 
+                                    Console.Write($"{completed}/{tasks.Count} {symCopy},{iCopy},{jCopy}     \r");
                             });
                         }
                     }
@@ -155,8 +165,10 @@ public static class Program {
                 sb.AppendLine(s);
                 Console.WriteLine(s);
 
-                Parallel.Invoke(tasks.ToArray());
-                // foreach (var task in tasks) task();
+                if (noMulti)
+                    foreach (var task in tasks) task();
+                else
+                    Parallel.Invoke(tasks.ToArray());
 
                 for (int sym = 0; sym < 4; sym++) {
                     Num subCount = subCounts[sym], subCountMul = subCount * (Num)autClassSizes[sym];
@@ -176,17 +188,18 @@ public static class Program {
                 sb.Insert(0, $"{totalCount} {sw.Elapsed}{Environment.NewLine}");
                 if (!noSave) File.WriteAllText(filename, sb.ToString());
             }
+            if (include.Remove("-1") && include.Count == 0) return 0;
+            Console.WriteLine();
         }
-        Console.WriteLine();
         {
-            Console.WriteLine("Phase 2/2: started trivial symmetries");
+            Console.WriteLine("Phase 2/2: trivial symmetries");
             var sw = Stopwatch.StartNew();
             List<Action> tasks = [];
             Num subCount = 0;
             var cpuTime = TimeSpan.Zero;
             Func<int, Num> fn = useSafe ? CountExtensionsSubsetSafe : CountExtensionsSubsetUnsafe;
             for (int j = 0, completed = 0; j <= MaxLeftStackLen; j++) {
-                if (include.Count != 0 && !include.Contains(j)) continue;
+                if (include.Count != 0 && !include.Contains("" + j)) continue;
                 var filename = $"trivial_{N}_{MaxLeftStackLen}_{j}.txt";
                 if (!noLoad && File.Exists(filename)) {
                     var lines = File.ReadAllLines(filename);
@@ -208,15 +221,17 @@ public static class Program {
                         }
                         var s = $"[{completed}/{tasks.Count}] #{filter} count={count:N0} elapsed={swCpu.Elapsed}";
                         if (!noSave) File.WriteAllText(filename, $"{count} {swCpu.Elapsed}{Environment.NewLine}" + s);
-                        Console.WriteLine(s);
+                        if (!quiet) Console.WriteLine(s);
                     });
                 }
             }
 
             Console.WriteLine($"Starting {tasks.Count} tasks - start time: {DateTime.Now}");
 
-            Parallel.Invoke(tasks.ToArray());
-            // foreach (var task in tasks) task();
+            if (noMulti)
+                foreach (var task in tasks) task();
+            else
+                Parallel.Invoke(tasks.ToArray());
 
             Console.WriteLine($"{subCount:N0} polycubes with {
                 N} cells (number of polycubes fixed by trivial symmetry) - Elapsed: {sw.Elapsed}, CPU time: {cpuTime}");

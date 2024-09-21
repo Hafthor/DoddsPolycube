@@ -384,33 +384,33 @@ public static class Program {
                             int neighbours = 0, subCount = 128;
                             if (*(i - X) > 127) {
                                 count += --*(i - X);
-                                neighbours++;
                                 subCount += *(i - X - X) + *(i - X - Y) + *(i - X - Z) + *(i - X + Y) + *(i - X + Z);
+                                neighbours++;
                             }
                             if (*(i - Y) > 127) {
                                 count += --*(i - Y);
-                                neighbours++;
                                 subCount += *(i - Y - Y) + *(i - Y - X) + *(i - Y - Z) + *(i - Y + X) + *(i - Y + Z);
+                                neighbours++;
                             }
                             if (*(i - Z) > 127) {
                                 count += --*(i - Z);
-                                neighbours++;
                                 subCount += *(i - Z - Z) + *(i - Z - X) + *(i - Z - Y) + *(i - Z + X) + *(i - Z + Y);
+                                neighbours++;
                             }
                             if (*(i + X) > 127) {
                                 count += --*(i + X);
-                                neighbours++;
                                 subCount += *(i + X + X) + *(i + X + Y) + *(i + X + Z) + *(i + X - Y) + *(i + X - Z);
+                                neighbours++;
                             }
                             if (*(i + Y) > 127) {
                                 count += --*(i + Y);
-                                neighbours++;
                                 subCount += *(i + Y + Y) + *(i + Y + X) + *(i + Y + Z) + *(i + Y - X) + *(i + Y - Z);
+                                neighbours++;
                             }
                             if (*(i + Z) > 127) {
                                 count += --*(i + Z);
-                                neighbours++;
                                 subCount += *(i + Z + Z) + *(i + Z + X) + *(i + Z + Y) + *(i + Z - X) + *(i + Z - Y);
+                                neighbours++;
                             }
                             count += (Num)((subCount >> 8) + (neighbours * (neighbours + lengthPlus) >> 1));
                         }
@@ -485,33 +485,33 @@ public static class Program {
                         int neighbours = 0, subCount = 128;
                         if (b[i - X] > 127) {
                             count += --b[i - X];
-                            neighbours++;
                             subCount += b[i - X - X] + b[i - X - Y] + b[i - X - Z] + b[i - X + Y] + b[i - X + Z];
+                            neighbours++;
                         }
                         if (b[i - Y] > 127) {
                             count += --b[i - Y];
-                            neighbours++;
                             subCount += b[i - Y - Y] + b[i - Y - X] + b[i - Y - Z] + b[i - Y + X] + b[i - Y + Z];
+                            neighbours++;
                         }
                         if (b[i - Z] > 127) {
                             count += --b[i - Z];
-                            neighbours++;
                             subCount += b[i - Z - Z] + b[i - Z - X] + b[i - Z - Y] + b[i - Z + X] + b[i - Z + Y];
+                            neighbours++;
                         }
                         if (b[i + X] > 127) {
                             count += --b[i + X];
-                            neighbours++;
                             subCount += b[i + X + X] + b[i + X + Y] + b[i + X + Z] + b[i + X - Y] + b[i + X - Z];
+                            neighbours++;
                         }
                         if (b[i + Y] > 127) {
                             count += --b[i + Y];
-                            neighbours++;
                             subCount += b[i + Y + Y] + b[i + Y + X] + b[i + Y + Z] + b[i + Y - X] + b[i + Y - Z];
+                            neighbours++;
                         }
                         if (b[i + Z] > 127) {
                             count += --b[i + Z];
-                            neighbours++;
                             subCount += b[i + Z + Z] + b[i + Z + X] + b[i + Z + Y] + b[i + Z - X] + b[i + Z - Y];
+                            neighbours++;
                         }
                         count += (Num)((subCount >> 8) + (neighbours * (neighbours + lengthPlus) >> 1));
                     }

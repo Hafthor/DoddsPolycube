@@ -131,13 +131,13 @@ public static class Program {
                                 ];
                             int symCopy = sym, iCopy = i, jCopy = j; // copy, since lambda expression captures variable
                             tasks.Add(() => {
-                                var sw = Stopwatch.StartNew();
+                                var swCpu = Stopwatch.StartNew();
                                 var count = CountSymmetricPolycubes(matrixRep, affineShift);
-                                sw.Stop();
+                                swCpu.Stop();
                                 lock (tasks) {
                                     completed++;
                                     subCounts[symCopy] += count;
-                                    elapsed += sw.Elapsed;
+                                    elapsed += swCpu.Elapsed;
                                 }
                                 Console.Write($"{completed}/{tasks.Count} {symCopy},{iCopy},{jCopy}     \r");
                             });
@@ -192,16 +192,16 @@ public static class Program {
                 } else {
                     int filter = j; // copy, since lambda expression captures the variable
                     tasks.Add(() => {
-                        var sw = Stopwatch.StartNew();
+                        var swCpu = Stopwatch.StartNew();
                         var count = CountExtensionsSubsetUnsafe(filter);
-                        sw.Stop();
+                        swCpu.Stop();
                         lock (tasks) {
                             completed++;
                             subCount += count;
-                            cpuTime += sw.Elapsed;
+                            cpuTime += swCpu.Elapsed;
                         }
-                        var s = $"[{completed}/{tasks.Count}] #{filter} count={count:N0} elapsed={sw.Elapsed}";
-                        File.WriteAllText(filename, $"{count} {sw.Elapsed}{Environment.NewLine}" + s);
+                        var s = $"[{completed}/{tasks.Count}] #{filter} count={count:N0} elapsed={swCpu.Elapsed}";
+                        File.WriteAllText(filename, $"{count} {swCpu.Elapsed}{Environment.NewLine}" + s);
                         Console.WriteLine(s);
                     });
                 }
@@ -227,9 +227,9 @@ public static class Program {
     }
 
     private static Num CountSymmetricPolycubes(int[] linearMap, int[] affineShift) {
-        const int XMul = 1, YMul = 2 * N + 1, ZMul = YMul * (2 * N + 1), Size = (N + 2) * ZMul;
-        var adjacencyCounts = new byte[Size];
-        Array.Fill(adjacencyCounts, (byte)1, 0, ZMul + N * YMul + N + 1);
+        const int xMul = 1, yMul = 2 * N + 1, zMul = yMul * (2 * N + 1);
+        var adjacencyCounts = new byte[(N + 2) * zMul];
+        Array.Fill(adjacencyCounts, (byte)1, 0, zMul + N * yMul + N + 1);
 
         HashSet<(int, int, int)> requiredCells = [];
         Stack<(int, int, int)> recoveryStack = new(), extensionStack = new();
@@ -243,7 +243,7 @@ public static class Program {
             while (extensionStack.Count > 0) {
                 int x, y, z;
                 recoveryStack.Push((x, y, z) = extensionStack.Pop());
-                int xyz = x * XMul + y * YMul + z * ZMul;
+                int xyz = x * xMul + y * yMul + z * zMul;
 
                 bool existingRequirement = requiredCells.Remove((x, y, z));
                 if (!existingRequirement) {
@@ -264,21 +264,21 @@ public static class Program {
                     if (cellsToAdd == 0) count++;
                     else {
                         int innerOriginalLength = extensionStack.Count;
-                        if (adjacencyCounts[xyz - XMul]++ == 0) extensionStack.Push((x - 1, y, z));
-                        if (adjacencyCounts[xyz - YMul]++ == 0) extensionStack.Push((x, y - 1, z));
-                        if (adjacencyCounts[xyz - ZMul]++ == 0) extensionStack.Push((x, y, z - 1));
-                        if (adjacencyCounts[xyz + XMul]++ == 0) extensionStack.Push((x + 1, y, z));
-                        if (adjacencyCounts[xyz + YMul]++ == 0) extensionStack.Push((x, y + 1, z));
-                        if (adjacencyCounts[xyz + ZMul]++ == 0) extensionStack.Push((x, y, z + 1));
+                        if (adjacencyCounts[xyz - xMul]++ == 0) extensionStack.Push((x - 1, y, z));
+                        if (adjacencyCounts[xyz - yMul]++ == 0) extensionStack.Push((x, y - 1, z));
+                        if (adjacencyCounts[xyz - zMul]++ == 0) extensionStack.Push((x, y, z - 1));
+                        if (adjacencyCounts[xyz + xMul]++ == 0) extensionStack.Push((x + 1, y, z));
+                        if (adjacencyCounts[xyz + yMul]++ == 0) extensionStack.Push((x, y + 1, z));
+                        if (adjacencyCounts[xyz + zMul]++ == 0) extensionStack.Push((x, y, z + 1));
 
                         count += CountExtensions(cellsToAdd);
 
-                        --adjacencyCounts[xyz - XMul];
-                        --adjacencyCounts[xyz - YMul];
-                        --adjacencyCounts[xyz - ZMul];
-                        --adjacencyCounts[xyz + XMul];
-                        --adjacencyCounts[xyz + YMul];
-                        --adjacencyCounts[xyz + ZMul];
+                        --adjacencyCounts[xyz - xMul];
+                        --adjacencyCounts[xyz - yMul];
+                        --adjacencyCounts[xyz - zMul];
+                        --adjacencyCounts[xyz + xMul];
+                        --adjacencyCounts[xyz + yMul];
+                        --adjacencyCounts[xyz + zMul];
                         while (extensionStack.Count != innerOriginalLength)
                             extensionStack.Pop(); // maybe replace this w/ custom stack to avoid this loop
                     }
@@ -312,7 +312,7 @@ public static class Program {
             // trivial choice is X = 1, Y = n, Z = n * n.
             // A simple reduction is X = 1, Y = n, Z = n * (n / 2) + (n + 1) / 2
             const int Y = X + 1;
-            // minimising Z is memory efficient. Unclear if this noticably affects performance.
+            // minimising Z is memory efficient. Unclear if this noticeably affects performance.
             // Z ~ 3/16 n^2 is the best I can find for arbitrary n
             const int Z = X + (N + 5) / 4 * 3;
             // could use ints or shorts as offsets to save memory, but it's faster to directly store the
@@ -430,7 +430,7 @@ public static class Program {
         // trivial choice is X = 1, Y = n, Z = n * n.
         // A simple reduction is X = 1, Y = n, Z = n * (n / 2) + (n + 1) / 2
         const int Y = X + 1;
-        // minimising Z is memory efficient. Unclear if this noticably affects performance.
+        // minimising Z is memory efficient. Unclear if this noticeably affects performance.
         // Z ~ 3/16 n^2 is the best I can find for arbitrary n
         const int Z = X + (N + 5) / 4 * 3;
         // could use ints or shorts as offsets to save memory, but it's faster to directly store the

@@ -45,7 +45,7 @@ using System.Diagnostics;
 // using System.Numerics; // for BigInteger
 
 public static class Program {
-    private const int N = 23; // number of polycube cells. Need N >= 6 and > FilterDepth 
+    private const int N = 16; // number of polycube cells. Need N >= 6 and > FilterDepth 
 
     // make sure type Num is big enough for a(N) * 24
     private const int FilterDepth = 5; // >=5 && <N
@@ -151,6 +151,7 @@ public static class Program {
                 Console.WriteLine(s);
 
                 Parallel.Invoke(tasks.ToArray());
+                // foreach (var task in tasks) task();
 
                 for (int sym = 0; sym < 4; sym++) {
                     Num subCount = subCounts[sym], subCountMul = subCount * (Num)autClassSizes[sym];
@@ -192,7 +193,7 @@ public static class Program {
                     int filter = j; // copy, since lambda expression captures the variable
                     tasks.Add(() => {
                         var sw = Stopwatch.StartNew();
-                        var count = CountExtensionsSubset(filter);
+                        var count = CountExtensionsSubsetUnsafe(filter);
                         sw.Stop();
                         lock (tasks) {
                             completed++;
@@ -209,6 +210,7 @@ public static class Program {
             Console.WriteLine($"Starting {tasks.Count} tasks - start time: {DateTime.Now}");
 
             Parallel.Invoke(tasks.ToArray());
+            // foreach (var task in tasks) task();
 
             Console.WriteLine($"{subCount:N0} polycubes with {
                 N} cells (number of polycubes fixed by trivial symmetry) - Elapsed: {sw.Elapsed}, CPU time: {cpuTime}");
@@ -303,7 +305,7 @@ public static class Program {
         }
     }
 
-    private static Num CountExtensionsSubset(int filter) {
+    private static Num CountExtensionsSubsetUnsafe(int filter) {
         unsafe {
             // set X<Y<Z such that aX+bY+cZ = 0 implies a = b = c = 0 or |a|+|b|+|c| > n
             const int X = (N + 5) / 4 * ((N + 5) / 4 * 3 - 2);
@@ -419,6 +421,144 @@ public static class Program {
                     *stackTop1++ = *stackTop2++;
                 return count;
             }
+        }
+    }
+
+    private static Num CountExtensionsSubset(int filter) {
+        // set X<Y<Z such that aX+bY+cZ = 0 implies a = b = c = 0 or |a|+|b|+|c| > n
+        const int X = (N + 5) / 4 * ((N + 5) / 4 * 3 - 2);
+        // trivial choice is X = 1, Y = n, Z = n * n.
+        // A simple reduction is X = 1, Y = n, Z = n * (n / 2) + (n + 1) / 2
+        const int Y = X + 1;
+        // minimising Z is memory efficient. Unclear if this noticably affects performance.
+        // Z ~ 3/16 n^2 is the best I can find for arbitrary n
+        const int Z = X + (N + 5) / 4 * 3;
+        // could use ints or shorts as offsets to save memory, but it's faster to directly store the
+        // pointers to avoid adding pointer offsets at every lookup
+        byte[] byteBoard = new byte[(N + 2) * Z];
+        // the first Z + 1 bytes are disallowed extensions; first Z are less than the minimum,
+        // last 1 due to edge case of initial polycube having no neighbours
+        Array.Fill(byteBoard, (byte)255, Z + 1, byteBoard.Length - Z - 1);
+
+        // total length of the two stacks is at most 4n-9. One stack grows from the left, the other
+        // stack grows from the right
+        int[] refStack = new int[(N - 2) * 4];
+        // seeded with first index of the byte board as the only allowed extension
+        refStack[0] = Z;
+
+        return CountExtensions(N, 1, refStack.Length);
+
+        Num CountExtensions(int depth, int stackPtr, int stackLimit) {
+            Num count = 0;
+            int stackTopOriginal = stackPtr;
+            while (stackPtr != 0) {
+                int index = refStack[--stackPtr];
+                int stackTopInner = stackPtr;
+
+                if (++byteBoard[index - X] == 0) refStack[stackTopInner++] = index - X;
+                if (++byteBoard[index - Y] == 0) refStack[stackTopInner++] = index - Y;
+                if (++byteBoard[index - Z] == 0) refStack[stackTopInner++] = index - Z;
+                if (++byteBoard[index + X] == 0) refStack[stackTopInner++] = index + X;
+                if (++byteBoard[index + Y] == 0) refStack[stackTopInner++] = index + Y;
+                if (++byteBoard[index + Z] == 0) refStack[stackTopInner++] = index + Z;
+
+                if (depth == 4) {
+                    int stackTop = stackTopInner;
+                    const int X2 = X + X, Y2 = Y + Y, Z2 = Z + Z;
+                    const int sYX = Y + X, sZX = Z + X, sZY = Z + Y;
+                    const int dYX = Y - X, dZX = Z - X, dZY = Z - Y;
+                    int length = stackTop;
+                    count += (Num)(length * (length - 1) * (length - 2) / 6);
+                    int stackTopTemp = stackTop;
+                    for (int lengthPlus = (length << 1) - 511; stackTopTemp != 0;) {
+                        int i = refStack[--stackTopTemp];
+                        int neighbours = 0, subCount = 128;
+                        if (byteBoard[i - X] > 127) {
+                            count += --byteBoard[i - X];
+                            neighbours++;
+                            subCount += byteBoard[i - X2] +
+                                        byteBoard[i - sYX] +
+                                        byteBoard[i - sZX] +
+                                        byteBoard[i + dYX] +
+                                        byteBoard[i + dZX];
+                        }
+                        if (byteBoard[i - Y] > 127) {
+                            count += --byteBoard[i - Y];
+                            neighbours++;
+                            subCount += byteBoard[i - Y2] +
+                                        byteBoard[i - sYX] +
+                                        byteBoard[i - sZY] +
+                                        byteBoard[i - dYX] +
+                                        byteBoard[i + dZY];
+                        }
+                        if (byteBoard[i - Z] > 127) {
+                            count += --byteBoard[i - Z];
+                            neighbours++;
+                            subCount += byteBoard[i - Z2] +
+                                        byteBoard[i - sZX] +
+                                        byteBoard[i - sZY] +
+                                        byteBoard[i - dZX] +
+                                        byteBoard[i - dZY];
+                        }
+                        if (byteBoard[i + X] > 127) {
+                            count += --byteBoard[i + X];
+                            neighbours++;
+                            subCount += byteBoard[i + X2] +
+                                        byteBoard[i + sYX] +
+                                        byteBoard[i + sZX] +
+                                        byteBoard[i - dYX] +
+                                        byteBoard[i - dZX];
+                        }
+                        if (byteBoard[i + Y] > 127) {
+                            count += --byteBoard[i + Y];
+                            neighbours++;
+                            subCount += byteBoard[i + Y2] +
+                                        byteBoard[i + sYX] +
+                                        byteBoard[i + sZY] +
+                                        byteBoard[i + dYX] +
+                                        byteBoard[i - dZY];
+                        }
+                        if (byteBoard[i + Z] > 127) {
+                            count += --byteBoard[i + Z];
+                            neighbours++;
+                            subCount += byteBoard[i + Z2] +
+                                        byteBoard[i + sZX] +
+                                        byteBoard[i + sZY] +
+                                        byteBoard[i + dZX] +
+                                        byteBoard[i + dZY];
+                        }
+                        count += (Num)((subCount >> 8) + (neighbours * (neighbours + lengthPlus) >> 1));
+                    }
+                    while (stackTop != 0) {
+                        int i = refStack[--stackTop];
+                        byteBoard[i - X] |= (byte)(byteBoard[i - X] >> 4);
+                        byteBoard[i - Y] |= (byte)(byteBoard[i - Y] >> 4);
+                        byteBoard[i - Z] |= (byte)(byteBoard[i - Z] >> 4);
+                        byteBoard[i + X] |= (byte)(byteBoard[i + X] >> 4);
+                        byteBoard[i + Y] |= (byte)(byteBoard[i + Y] >> 4);
+                        byteBoard[i + Z] |= (byte)(byteBoard[i + Z] >> 4);
+                    }
+                } else if (depth != FilterDepth || stackPtr == filter) {
+                    // if multithreading is not wanted, remove "if (condition)" from this else statement
+                    count += CountExtensions(depth - 1, stackTopInner, stackLimit);
+                }
+
+                --byteBoard[index - X];
+                --byteBoard[index - Y];
+                --byteBoard[index - Z];
+                --byteBoard[index + X];
+                --byteBoard[index + Y];
+                --byteBoard[index + Z];
+
+                // doing this push before the recursion would add one extra unnecessary element to the stack
+                // at each level of recursion
+                refStack[--stackLimit] = index;
+            }
+
+            while (stackPtr != stackTopOriginal) {
+                refStack[stackPtr++] = refStack[stackLimit++];
+            }
+            return count;
         }
     }
 }

@@ -77,9 +77,14 @@ public static class Program {
          */
 
         HashSet<int> include = [..args.Select(int.Parse)];
-        if (args.Length == 0)
-            Console.WriteLine($"You can specify which symmetries to include as arguments (0-{
-                MaxLeftStackLen}), (-1) for nontrivials");
+        if (args.Length == 0) {
+            Console.WriteLine($"You can specify which symmetries to include as arguments (0-{MaxLeftStackLen})");
+            Console.WriteLine("-1 for non-trivial symmetries. -2 for safe method on trivial symmetries (slower).");
+            Console.WriteLine("-3 to not load prior work. -4 to not save new work.");
+        }
+        bool useSafe = include.Remove(-2); // remove so we can still do all, but with safe method
+        bool noLoad = include.Remove(-3); // remove so we can still do all, but without loading
+        bool noSave = include.Remove(-4); // remove so we can still do all, but without saving
 
         // enumerate the sum over the order 24 group of the size of the fix of each group element, and divide by 24
         // (Burnside's lemma)
@@ -89,7 +94,7 @@ public static class Program {
             Console.WriteLine("Phase 1/2: started nontrivial symmetries");
 
             var filename = $"nontrivial_{N}.txt";
-            if (File.Exists(filename)) {
+            if (!noLoad && File.Exists(filename)) {
                 var lines = File.ReadAllLines(filename);
                 var line0 = lines[0].Split(' ');
                 totalCount = Num.Parse(line0[0]);
@@ -169,7 +174,7 @@ public static class Program {
                 Console.WriteLine(s);
 
                 sb.Insert(0, $"{totalCount} {sw.Elapsed}{Environment.NewLine}");
-                File.WriteAllText(filename, sb.ToString());
+                if (!noSave) File.WriteAllText(filename, sb.ToString());
             }
         }
         Console.WriteLine();
@@ -179,10 +184,11 @@ public static class Program {
             List<Action> tasks = [];
             Num subCount = 0;
             var cpuTime = TimeSpan.Zero;
+            Func<int, Num> fn = useSafe ? CountExtensionsSubsetSafe : CountExtensionsSubsetUnsafe;
             for (int j = 0, completed = 0; j <= MaxLeftStackLen; j++) {
                 if (include.Count != 0 && !include.Contains(j)) continue;
                 var filename = $"trivial_{N}_{MaxLeftStackLen}_{j}.txt";
-                if (File.Exists(filename)) {
+                if (!noLoad && File.Exists(filename)) {
                     var lines = File.ReadAllLines(filename);
                     var line0 = lines[0].Split(' ');
                     subCount += Num.Parse(line0[0]);
@@ -193,7 +199,7 @@ public static class Program {
                     int filter = j; // copy, since lambda expression captures the variable
                     tasks.Add(() => {
                         var swCpu = Stopwatch.StartNew();
-                        var count = CountExtensionsSubsetUnsafe(filter);
+                        var count = fn(filter);
                         swCpu.Stop();
                         lock (tasks) {
                             completed++;
@@ -201,7 +207,7 @@ public static class Program {
                             cpuTime += swCpu.Elapsed;
                         }
                         var s = $"[{completed}/{tasks.Count}] #{filter} count={count:N0} elapsed={swCpu.Elapsed}";
-                        File.WriteAllText(filename, $"{count} {swCpu.Elapsed}{Environment.NewLine}" + s);
+                        if (!noSave) File.WriteAllText(filename, $"{count} {swCpu.Elapsed}{Environment.NewLine}" + s);
                         Console.WriteLine(s);
                     });
                 }
@@ -223,15 +229,20 @@ public static class Program {
             totalCount /= 24;
             Console.WriteLine($"{totalCount:N0} free polycubes with {N} cells - Elapsed: {swTotal.Elapsed}");
         }
+
+        Console.WriteLine($"Done - end time: {DateTime.Now}");
         return 0;
     }
 
     private static Num CountSymmetricPolycubes(int[] linearMap, int[] affineShift) {
-        const int xMul = 1, yMul = 2 * N + 1, zMul = yMul * (2 * N + 1);
-        var adjacencyCounts = new byte[(N + 2) * zMul];
-        Array.Fill(adjacencyCounts, (byte)1, 0, zMul + N * yMul + N + 1);
+        const int mulX = 1, mulY = 2 * N + 1, mulZ = mulY * (2 * N + 1);
+        // adjacencyCounts is a 3D array, but we're using a 1D array to store it
+        // order is z, y, x - use mulX/Y/Z to get the correct index
+        var adjacencyCounts = new byte[(N + 2) * mulZ];
+        // we set the first Z layer, the first N layers of Y and the first N+1 layers of X to 1
+        Array.Fill(adjacencyCounts, (byte)1, 0, mulZ + N * mulY + N + 1);
 
-        HashSet<(int, int, int)> requiredCells = [];
+        HashSet<(int, int, int)> requiredCells = []; // note that x, y, z may be negative
         Stack<(int, int, int)> recoveryStack = new(), extensionStack = new();
         extensionStack.Push((N, N, 1));
         return CountExtensions(N);
@@ -241,9 +252,9 @@ public static class Program {
             Num count = 0;
             int originalLength = extensionStack.Count;
             while (extensionStack.Count > 0) {
-                int x, y, z;
+                int x, y, z; // x, y, z are always positive
                 recoveryStack.Push((x, y, z) = extensionStack.Pop());
-                int xyz = x * xMul + y * yMul + z * zMul;
+                int xyz = x * mulX + y * mulY + z * mulZ;
 
                 bool existingRequirement = requiredCells.Remove((x, y, z));
                 if (!existingRequirement) {
@@ -264,21 +275,21 @@ public static class Program {
                     if (cellsToAdd == 0) count++;
                     else {
                         int innerOriginalLength = extensionStack.Count;
-                        if (adjacencyCounts[xyz - xMul]++ == 0) extensionStack.Push((x - 1, y, z));
-                        if (adjacencyCounts[xyz - yMul]++ == 0) extensionStack.Push((x, y - 1, z));
-                        if (adjacencyCounts[xyz - zMul]++ == 0) extensionStack.Push((x, y, z - 1));
-                        if (adjacencyCounts[xyz + xMul]++ == 0) extensionStack.Push((x + 1, y, z));
-                        if (adjacencyCounts[xyz + yMul]++ == 0) extensionStack.Push((x, y + 1, z));
-                        if (adjacencyCounts[xyz + zMul]++ == 0) extensionStack.Push((x, y, z + 1));
+                        if (adjacencyCounts[xyz - mulX]++ == 0) extensionStack.Push((x - 1, y, z));
+                        if (adjacencyCounts[xyz - mulY]++ == 0) extensionStack.Push((x, y - 1, z));
+                        if (adjacencyCounts[xyz - mulZ]++ == 0) extensionStack.Push((x, y, z - 1));
+                        if (adjacencyCounts[xyz + mulX]++ == 0) extensionStack.Push((x + 1, y, z));
+                        if (adjacencyCounts[xyz + mulY]++ == 0) extensionStack.Push((x, y + 1, z));
+                        if (adjacencyCounts[xyz + mulZ]++ == 0) extensionStack.Push((x, y, z + 1));
 
                         count += CountExtensions(cellsToAdd);
 
-                        --adjacencyCounts[xyz - xMul];
-                        --adjacencyCounts[xyz - yMul];
-                        --adjacencyCounts[xyz - zMul];
-                        --adjacencyCounts[xyz + xMul];
-                        --adjacencyCounts[xyz + yMul];
-                        --adjacencyCounts[xyz + zMul];
+                        --adjacencyCounts[xyz - mulX];
+                        --adjacencyCounts[xyz - mulY];
+                        --adjacencyCounts[xyz - mulZ];
+                        --adjacencyCounts[xyz + mulX];
+                        --adjacencyCounts[xyz + mulY];
+                        --adjacencyCounts[xyz + mulZ];
                         while (extensionStack.Count != innerOriginalLength)
                             extensionStack.Pop(); // maybe replace this w/ custom stack to avoid this loop
                     }
@@ -305,16 +316,19 @@ public static class Program {
         }
     }
 
+    // set X<Y<Z such that aX+bY+cZ = 0 implies a = b = c = 0 or |a|+|b|+|c| > n
+    private const int X = (N + 5) / 4 * ((N + 5) / 4 * 3 - 2);
+
+    // trivial choice is X = 1, Y = n, Z = n * n.
+    // A simple reduction is X = 1, Y = n, Z = n * (n / 2) + (n + 1) / 2
+    private const int Y = X + 1;
+
+    // minimising Z is memory efficient. Unclear if this noticeably affects performance.
+    // Z ~ 3/16 n^2 is the best I can find for arbitrary n
+    private const int Z = X + (N + 5) / 4 * 3;
+
     private static Num CountExtensionsSubsetUnsafe(int filter) {
         unsafe {
-            // set X<Y<Z such that aX+bY+cZ = 0 implies a = b = c = 0 or |a|+|b|+|c| > n
-            const int X = (N + 5) / 4 * ((N + 5) / 4 * 3 - 2);
-            // trivial choice is X = 1, Y = n, Z = n * n.
-            // A simple reduction is X = 1, Y = n, Z = n * (n / 2) + (n + 1) / 2
-            const int Y = X + 1;
-            // minimising Z is memory efficient. Unclear if this noticeably affects performance.
-            // Z ~ 3/16 n^2 is the best I can find for arbitrary n
-            const int Z = X + (N + 5) / 4 * 3;
             // could use ints or shorts as offsets to save memory, but it's faster to directly store the
             // pointers to avoid adding pointer offsets at every lookup
             byte* byteBoard = stackalloc byte[(N + 2) * Z];
@@ -347,15 +361,6 @@ public static class Program {
 
                     if (depth == 4) {
                         byte** stackTop = stackTopInner;
-                        const int X2 = X + X,
-                            Y2 = Y + Y,
-                            Z2 = Z + Z,
-                            sYX = Y + X,
-                            sZX = Z + X,
-                            sZY = Z + Y,
-                            dYX = Y - X,
-                            dZX = Z - X,
-                            dZY = Z - Y;
                         int length = (int)(stackTop - refStack);
                         count += (Num)(length * (length - 1) * (length - 2) / 6);
                         byte** stackTopTemp = stackTop;
@@ -365,32 +370,32 @@ public static class Program {
                             if (*(i - X) > 127) {
                                 count += --*(i - X);
                                 neighbours++;
-                                subCount += *(i - X2) + *(i - sYX) + *(i - sZX) + *(i + dYX) + *(i + dZX);
+                                subCount += *(i - X + X) + *(i - X - Y) + *(i - X - Z) + *(i - X + Y) + *(i - X + Z);
                             }
                             if (*(i - Y) > 127) {
                                 count += --*(i - Y);
                                 neighbours++;
-                                subCount += *(i - Y2) + *(i - sYX) + *(i - sZY) + *(i - dYX) + *(i + dZY);
+                                subCount += *(i - Y - Y) + *(i - Y - X) + *(i - Y - Z) + *(i - Y + X) + *(i - Y + Z);
                             }
                             if (*(i - Z) > 127) {
                                 count += --*(i - Z);
                                 neighbours++;
-                                subCount += *(i - Z2) + *(i - sZX) + *(i - sZY) + *(i - dZX) + *(i - dZY);
+                                subCount += *(i - Z - Z) + *(i - Z - X) + *(i - Z - Y) + *(i - Z + X) + *(i - Z + Y);
                             }
                             if (*(i + X) > 127) {
                                 count += --*(i + X);
                                 neighbours++;
-                                subCount += *(i + X2) + *(i + sYX) + *(i + sZX) + *(i - dYX) + *(i - dZX);
+                                subCount += *(i + X + X) + *(i + X + Y) + *(i + X + Z) + *(i + X - Y) + *(i + X - Z);
                             }
                             if (*(i + Y) > 127) {
                                 count += --*(i + Y);
                                 neighbours++;
-                                subCount += *(i + Y2) + *(i + sYX) + *(i + sZY) + *(i + dYX) + *(i - dZY);
+                                subCount += *(i + Y + Y) + *(i + Y + X) + *(i + Y + Z) + *(i + Y - X) + *(i + Y - Z);
                             }
                             if (*(i + Z) > 127) {
                                 count += --*(i + Z);
                                 neighbours++;
-                                subCount += *(i + Z2) + *(i + sZX) + *(i + sZY) + *(i + dZX) + *(i + dZY);
+                                subCount += *(i + Z + Z) + *(i + Z + X) + *(i + Z + Y) + *(i + Z - X) + *(i + Z - Y);
                             }
                             count += (Num)((subCount >> 8) + (neighbours * (neighbours + lengthPlus) >> 1));
                         }
@@ -424,15 +429,7 @@ public static class Program {
         }
     }
 
-    private static Num CountExtensionsSubset(int filter) {
-        // set X<Y<Z such that aX+bY+cZ = 0 implies a = b = c = 0 or |a|+|b|+|c| > n
-        const int X = (N + 5) / 4 * ((N + 5) / 4 * 3 - 2);
-        // trivial choice is X = 1, Y = n, Z = n * n.
-        // A simple reduction is X = 1, Y = n, Z = n * (n / 2) + (n + 1) / 2
-        const int Y = X + 1;
-        // minimising Z is memory efficient. Unclear if this noticeably affects performance.
-        // Z ~ 3/16 n^2 is the best I can find for arbitrary n
-        const int Z = X + (N + 5) / 4 * 3;
+    private static Num CountExtensionsSubsetSafe(int filter) {
         // could use ints or shorts as offsets to save memory, but it's faster to directly store the
         // pointers to avoid adding pointer offsets at every lookup
         byte[] byteBoard = new byte[(N + 2) * Z];
@@ -464,68 +461,42 @@ public static class Program {
 
                 if (depth == 4) {
                     int stackTop = stackTopInner;
-                    const int X2 = X + X, Y2 = Y + Y, Z2 = Z + Z;
-                    const int sYX = Y + X, sZX = Z + X, sZY = Z + Y;
-                    const int dYX = Y - X, dZX = Z - X, dZY = Z - Y;
                     int length = stackTop;
                     count += (Num)(length * (length - 1) * (length - 2) / 6);
                     int stackTopTemp = stackTop;
                     for (int lengthPlus = (length << 1) - 511; stackTopTemp != 0;) {
+                        byte[] b = byteBoard;
                         int i = refStack[--stackTopTemp];
                         int neighbours = 0, subCount = 128;
-                        if (byteBoard[i - X] > 127) {
-                            count += --byteBoard[i - X];
+                        if (b[i - X] > 127) {
+                            count += --b[i - X];
                             neighbours++;
-                            subCount += byteBoard[i - X2] +
-                                        byteBoard[i - sYX] +
-                                        byteBoard[i - sZX] +
-                                        byteBoard[i + dYX] +
-                                        byteBoard[i + dZX];
+                            subCount += b[i - X - X] + b[i - X - Y] + b[i - X - Z] + b[i - X + Y] + b[i - X + Z];
                         }
-                        if (byteBoard[i - Y] > 127) {
-                            count += --byteBoard[i - Y];
+                        if (b[i - Y] > 127) {
+                            count += --b[i - Y];
                             neighbours++;
-                            subCount += byteBoard[i - Y2] +
-                                        byteBoard[i - sYX] +
-                                        byteBoard[i - sZY] +
-                                        byteBoard[i - dYX] +
-                                        byteBoard[i + dZY];
+                            subCount += b[i - Y - Y] + b[i - Y - X] + b[i - Y - Z] + b[i - Y + X] + b[i - Y + Z];
                         }
-                        if (byteBoard[i - Z] > 127) {
-                            count += --byteBoard[i - Z];
+                        if (b[i - Z] > 127) {
+                            count += --b[i - Z];
                             neighbours++;
-                            subCount += byteBoard[i - Z2] +
-                                        byteBoard[i - sZX] +
-                                        byteBoard[i - sZY] +
-                                        byteBoard[i - dZX] +
-                                        byteBoard[i - dZY];
+                            subCount += b[i - Z - Z] + b[i - Z - X] + b[i - Z - Y] + b[i - Z + X] + b[i - Z + Y];
                         }
-                        if (byteBoard[i + X] > 127) {
-                            count += --byteBoard[i + X];
+                        if (b[i + X] > 127) {
+                            count += --b[i + X];
                             neighbours++;
-                            subCount += byteBoard[i + X2] +
-                                        byteBoard[i + sYX] +
-                                        byteBoard[i + sZX] +
-                                        byteBoard[i - dYX] +
-                                        byteBoard[i - dZX];
+                            subCount += b[i + X + X] + b[i + X + Y] + b[i + X + Z] + b[i + X - Y] + b[i + X - Z];
                         }
-                        if (byteBoard[i + Y] > 127) {
-                            count += --byteBoard[i + Y];
+                        if (b[i + Y] > 127) {
+                            count += --b[i + Y];
                             neighbours++;
-                            subCount += byteBoard[i + Y2] +
-                                        byteBoard[i + sYX] +
-                                        byteBoard[i + sZY] +
-                                        byteBoard[i + dYX] +
-                                        byteBoard[i - dZY];
+                            subCount += b[i + Y + Y] + b[i + Y + X] + b[i + Y + Z] + b[i + Y - X] + b[i + Y - Z];
                         }
-                        if (byteBoard[i + Z] > 127) {
-                            count += --byteBoard[i + Z];
+                        if (b[i + Z] > 127) {
+                            count += --b[i + Z];
                             neighbours++;
-                            subCount += byteBoard[i + Z2] +
-                                        byteBoard[i + sZX] +
-                                        byteBoard[i + sZY] +
-                                        byteBoard[i + dZX] +
-                                        byteBoard[i + dZY];
+                            subCount += b[i + Z + Z] + b[i + Z + X] + b[i + Z + Y] + b[i + Z - X] + b[i + Z - Y];
                         }
                         count += (Num)((subCount >> 8) + (neighbours * (neighbours + lengthPlus) >> 1));
                     }

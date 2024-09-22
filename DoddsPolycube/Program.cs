@@ -151,7 +151,7 @@ public static class Program {
                                     i * a1[1] + j * a2[1] + b[1],
                                     i * a1[2] + j * a2[2] + b[2]
                                 ];
-                            int symCopy = sym, iCopy = i, jCopy = j; // copy, since lambda expression captures variable
+                            int symCopy = sym; // copy, since lambda expression captures variable
                             tasks.Add(() => {
                                 var swCpu = Stopwatch.StartNew();
                                 var count = fn(matrixRep, affineShift);
@@ -162,7 +162,7 @@ public static class Program {
                                     elapsed += swCpu.Elapsed;
                                 }
                                 if (!quiet)
-                                    Console.Write($"{completed}/{tasks.Count} {symCopy},{iCopy},{jCopy}     \r");
+                                    Console.Write($"{completed}\r");
                             });
                         }
                     }

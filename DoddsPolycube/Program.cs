@@ -80,27 +80,53 @@ public static class Program {
         Console.WriteLine($"Dodds Polycube - N={N}, FilterDepth={FilterDepth}, NumType={numType}");
         HashSet<string> include = [..args];
         bool help = include.Remove("-h") || include.Remove("--help");
-        if (args.Length == 0) {
-            Console.WriteLine($"You can specify which symmetries to include as arguments (0-{MaxLeftStackLen})");
-            Console.WriteLine("-1 for non-trivial symmetries.");
-            Console.WriteLine("--useunsafe for unsafe method for non-trivial symmetries (not really faster).");
-            Console.WriteLine("--usesafe for safe method for trivial symmetries (slower).");
-            Console.WriteLine("--uselessunsafe for a less unsafe method on trivial symmetries (a bit slower).");
-            Console.WriteLine("--noload to not load prior work.");
-            Console.WriteLine("--nosave to not save new work.");
-            Console.WriteLine("--quiet to not print progress.");
-            Console.WriteLine("--nomulti to not use multithreading.");
-            if (help) return 0;
-            Console.WriteLine();
-        }
-        // remove so we can still do all
+        bool showHelp = help || args.Length == 0;
+        
+        if (showHelp)
+            Console.WriteLine($"You can specify which symmetries to include as arguments (0-{
+                MaxLeftStackLen}), -1 for non-trivial symmetries.");
+        
         bool useUnsafe = include.Remove("--useunsafe");
+        if (showHelp)
+            Console.WriteLine("--useunsafe for unsafe method for non-trivial symmetries (not really faster).");
+        
         bool useSafe = include.Remove("--usesafe");
+        if (showHelp)
+            Console.WriteLine("--usesafe for safe method for trivial symmetries (slower).");
+        
         bool useLessUnsafe = include.Remove("--uselessunsafe");
+        if (showHelp)
+            Console.WriteLine("--uselessunsafe for a less unsafe method on trivial symmetries (a bit slower).");
+        
         bool noLoad = include.Remove("--noload");
+        if (showHelp)
+            Console.WriteLine("--noload to not load prior work.");
+        
         bool noSave = include.Remove("--nosave");
+        if (showHelp)
+            Console.WriteLine("--nosave to not save new work.");
+        
         bool quiet = include.Remove("--quiet");
+        if (showHelp)
+            Console.WriteLine("--quiet to not print progress.");
+        
         bool noMulti = include.Remove("--nomulti");
+        if (showHelp) 
+            Console.WriteLine("--nomulti to not use multithreading.");
+        
+        if (help)
+            return 0;
+        if (showHelp)
+            Console.WriteLine();
+
+        var errors = include.Where(i => !int.TryParse(i, out int j) || j < -1 || j > MaxLeftStackLen).ToList();
+        if (errors.Count != 0) {
+            Console.WriteLine("Invalid arguments:");
+            foreach (var e in errors)
+                Console.WriteLine("    " + e);
+            Console.WriteLine("Use -h or --help for help.");
+            return 1;
+        }
 
         // enumerate the sum over the order 24 group of the size of the fix of each group element, and divide by 24
         // (Burnside's lemma)
@@ -137,7 +163,7 @@ public static class Program {
                     biases = [[2 * N, 2 * N, 0], [2 * N, 0, 0], [0, 0, 2], [N - 1, 0, 1 - N]];
                 List<Action> tasks = [];
 
-                int completed = 0;
+                int completed = 0, running = 0;
                 var subCounts = new Num[4];
                 var elapsed = TimeSpan.Zero;
                 Func<int[], int[], Num> fn = useUnsafe ? CountSymmetricPolycubesUnsafe : CountSymmetricPolycubes;
@@ -153,6 +179,9 @@ public static class Program {
                                 ];
                             int symCopy = sym; // copy, since lambda expression captures variable
                             tasks.Add(() => {
+                                Interlocked.Increment(ref running);
+                                if (!quiet)
+                                    Console.Write($"{running} {completed}  \r");
                                 var swCpu = Stopwatch.StartNew();
                                 var count = fn(matrixRep, affineShift);
                                 swCpu.Stop();
@@ -160,9 +189,10 @@ public static class Program {
                                     completed++;
                                     subCounts[symCopy] += count;
                                     elapsed += swCpu.Elapsed;
+                                    running--;
                                 }
                                 if (!quiet)
-                                    Console.Write($"{completed}\r");
+                                    Console.Write($"{running} {completed}  \r");
                             });
                         }
                     }
@@ -177,7 +207,8 @@ public static class Program {
                     foreach (var task in tasks)
                         task();
                 else
-                    Parallel.Invoke(tasks.ToArray());
+                    Parallel.Invoke(new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, 
+                        tasks.ToArray());
 
                 for (int sym = 0; sym < 4; sym++) {
                     Num subCount = subCounts[sym], subCountMul = subCount * (Num)autClassSizes[sym];
@@ -208,6 +239,7 @@ public static class Program {
         var cpuTime = TimeSpan.Zero;
         Func<int, Num> fn2 = useSafe ? CountExtensionsSubsetSafe :
             useLessUnsafe ? CountExtensionsSubsetLessUnsafe : CountExtensionsSubsetUnsafe;
+        int running2 = 0;
         for (int j = 0, completed = 0; j <= MaxLeftStackLen; j++) {
             if (include.Count != 0 && !include.Contains("" + j)) continue;
             var filename = $"trivial_{N}_{MaxLeftStackLen}_{j}.txt";
@@ -221,6 +253,8 @@ public static class Program {
             } else {
                 int filter = j; // copy, since lambda expression captures the variable
                 tasks2.Add(() => {
+                    Interlocked.Increment(ref running2);
+                    if (!quiet) Console.Write($"{running2} \r");
                     var swCpu = Stopwatch.StartNew();
                     var count = fn2(filter);
                     swCpu.Stop();
@@ -229,9 +263,11 @@ public static class Program {
                         subCount2 += count;
                         cpuTime += swCpu.Elapsed;
                     }
+                    Interlocked.Decrement(ref running2);
                     var s = $"[{completed}/{tasks2.Count}] #{filter} count={count:N0} elapsed={swCpu.Elapsed}";
-                    if (!noSave) File.WriteAllText(filename, $"{count} {swCpu.Elapsed}{Environment.NewLine}" + s);
                     if (!quiet) Console.WriteLine(s);
+                    if (!noSave) File.WriteAllText(filename, $"{count} {swCpu.Elapsed}{Environment.NewLine}" + s);
+                    if (!quiet) Console.Write($"{running2} \r");
                 });
             }
         }
@@ -242,7 +278,8 @@ public static class Program {
             foreach (var task in tasks2)
                 task();
         else
-            Parallel.Invoke(tasks2.ToArray());
+            Parallel.Invoke(new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                tasks2.ToArray());
 
         Console.WriteLine($"{subCount2:N0} polycubes with {
             N} cells (number of polycubes fixed by trivial symmetry) - Elapsed: {sw2.Elapsed}, CPU time: {cpuTime}");

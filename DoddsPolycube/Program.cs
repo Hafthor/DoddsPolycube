@@ -343,93 +343,96 @@ public static class Program {
     }
 
     private static Num CountSymmetricPolycubesUnsafe(int[] linearMap, int[] affineShift) {
-        // adjacencyCounts is a 3D array, but we're using a 1D array to store it
-        // order is z, y, x - use mulX/Y/Z to get the correct index
-        var adjacencyCounts = new byte[(N + 2) * MulZ];
-        // we set the first Z layer, the first N layers of Y and the first N+1 layers of X to 1
-        Array.Fill(adjacencyCounts, (byte)1, 0, MulZ + N * MulY + N + 1);
+        unsafe {
+            // adjacencyCounts is a 3D array, but we're using a 1D array to store it
+            // order is z, y, x - use mulX/Y/Z to get the correct index
+            //var adjacencyCounts = new byte[(N + 2) * MulZ];
+            byte *adjacencyCounts = stackalloc byte[(N + 2) * MulZ];
+            // we set the first Z layer, the first N layers of Y and the first N+1 layers of X to 1
+            //Array.Fill(adjacencyCounts, (byte)1, 0, MulZ + N * MulY + N + 1);
+            for (byte* i = adjacencyCounts, j = adjacencyCounts + MulZ + N * MulY + N + 1; i != j;)
+                *i++ = 1;
 
-        HashSet<(int, int, int)> requiredCells = []; // note that x, y, z may be negative
-        Stack<(int, int, int)> recoveryStack = new(), extensionStack = new();
-        extensionStack.Push((N, N, 1));
-        return CountExtensions(N, linearMap, affineShift, adjacencyCounts,
-            requiredCells, recoveryStack, extensionStack);
+            HashSet<(int, int, int)> requiredCells = []; // note that x, y, z may be negative
+            Stack<(int, int, int)> recoveryStack = new(), extensionStack = new();
+            extensionStack.Push((N, N, 1));
+            return CountExtensions(N, linearMap, affineShift, adjacencyCounts,
+                requiredCells, recoveryStack, extensionStack);
 
-        Num CountExtensions(int cellsToAdd, int[] linearMap, int[] affineShift,
-            byte[] adjacencyCounts, HashSet<(int, int, int)> requiredCells,
-            Stack<(int, int, int)> recoveryStack, Stack<(int, int, int)> extensionStack) {
-            cellsToAdd--;
-            Num count = 0;
-            int originalLength = extensionStack.Count;
-            while (extensionStack.Count > 0) {
-                int x, y, z; // x, y, z are always positive
-                recoveryStack.Push((x, y, z) = extensionStack.Pop());
+            Num CountExtensions(int cellsToAdd, int[] linearMap, int[] affineShift,
+                byte* adjacencyCounts, HashSet<(int, int, int)> requiredCells,
+                Stack<(int, int, int)> recoveryStack, Stack<(int, int, int)> extensionStack) {
+                cellsToAdd--;
+                Num count = 0;
+                int originalLength = extensionStack.Count;
+                while (extensionStack.Count > 0) {
+                    int x, y, z; // x, y, z are always positive
+                    recoveryStack.Push((x, y, z) = extensionStack.Pop());
 
-                bool existingRequirement = requiredCells.Remove((x, y, z));
-                if (!existingRequirement) {
-                    if (cellsToAdd < requiredCells.Count)
-                        continue; // number of required cells will only grow, so if already impossible, go to next
-                    // transform and add required cells until we get back to the original cell
-                    for (int tempX = x, tempY = y, tempZ = z;;) { // works for general transformations of finite order
+                    bool existingRequirement = requiredCells.Remove((x, y, z));
+                    if (!existingRequirement) {
+                        if (cellsToAdd < requiredCells.Count)
+                            continue; // number of required cells will only grow, so if already impossible, go to next
+                        // transform and add required cells until we get back to the original cell
+                        for (int tempX = x, tempY = y, tempZ = z;;) {
+                            // works for general transformations of finite order
+                            (tempX, tempY, tempZ) = (
+                                linearMap[0] * tempX + linearMap[1] * tempY + linearMap[2] * tempZ + affineShift[0],
+                                linearMap[3] * tempX + linearMap[4] * tempY + linearMap[5] * tempZ + affineShift[1],
+                                linearMap[6] * tempX + linearMap[7] * tempY + linearMap[8] * tempZ + affineShift[2]);
+                            if (x == tempX && y == tempY && z == tempZ) break;
+                            requiredCells.Add((tempX, tempY, tempZ));
+                        }
+                    }
+
+                    // if there are too many required cells, then no valid polycubes are possible
+                    if (cellsToAdd >= requiredCells.Count) {
+                        if (cellsToAdd == 0) count++;
+                        else {
+                            int innerOriginalLength = extensionStack.Count;
+                            int xyz = x * MulX + y * MulY + z * MulZ;
+                            byte* b = &adjacencyCounts[xyz];
+                            if ((*(b - MulX))++ == 0) extensionStack.Push((x - 1, y, z));
+                            if ((*(b - MulY))++ == 0) extensionStack.Push((x, y - 1, z));
+                            if ((*(b - MulZ))++ == 0) extensionStack.Push((x, y, z - 1));
+                            if ((*(b + MulX))++ == 0) extensionStack.Push((x + 1, y, z));
+                            if ((*(b + MulY))++ == 0) extensionStack.Push((x, y + 1, z));
+                            if ((*(b + MulZ))++ == 0) extensionStack.Push((x, y, z + 1));
+
+                            count += CountExtensions(cellsToAdd, linearMap, affineShift, adjacencyCounts,
+                                requiredCells, recoveryStack, extensionStack);
+
+                            --*(b - MulX);
+                            --*(b - MulY);
+                            --*(b - MulZ);
+                            --*(b + MulX);
+                            --*(b + MulY);
+                            --*(b + MulZ);
+                            while (extensionStack.Count != innerOriginalLength)
+                                extensionStack.Pop(); // maybe replace this w/ custom stack to avoid this loop
+                        }
+                    }
+
+                    if (existingRequirement) {
+                        requiredCells.Add((x, y, z));
+                        break; // this required cell will no longer be available in the extension stack,
+                        // so no more valid polycubes are possible in this branch
+                    }
+
+                    // transform and remove required cells until we get back to the original cell
+                    for (int tempX = x, tempY = y, tempZ = z;;) {
                         (tempX, tempY, tempZ) = (
                             linearMap[0] * tempX + linearMap[1] * tempY + linearMap[2] * tempZ + affineShift[0],
                             linearMap[3] * tempX + linearMap[4] * tempY + linearMap[5] * tempZ + affineShift[1],
                             linearMap[6] * tempX + linearMap[7] * tempY + linearMap[8] * tempZ + affineShift[2]);
                         if (x == tempX && y == tempY && z == tempZ) break;
-                        requiredCells.Add((tempX, tempY, tempZ));
+                        requiredCells.Remove((tempX, tempY, tempZ));
                     }
                 }
-
-                // if there are too many required cells, then no valid polycubes are possible
-                if (cellsToAdd >= requiredCells.Count) {
-                    if (cellsToAdd == 0) count++;
-                    else {
-                        int innerOriginalLength = extensionStack.Count;
-                        int xyz = x * MulX + y * MulY + z * MulZ;
-                        unsafe {
-                            fixed (byte* b = &adjacencyCounts[xyz]) {
-                                if ((*(b - MulX))++ == 0) extensionStack.Push((x - 1, y, z));
-                                if ((*(b - MulY))++ == 0) extensionStack.Push((x, y - 1, z));
-                                if ((*(b - MulZ))++ == 0) extensionStack.Push((x, y, z - 1));
-                                if ((*(b + MulX))++ == 0) extensionStack.Push((x + 1, y, z));
-                                if ((*(b + MulY))++ == 0) extensionStack.Push((x, y + 1, z));
-                                if ((*(b + MulZ))++ == 0) extensionStack.Push((x, y, z + 1));
-
-                                count += CountExtensions(cellsToAdd, linearMap, affineShift, adjacencyCounts,
-                                    requiredCells, recoveryStack, extensionStack);
-
-                                --*(b - MulX);
-                                --*(b - MulY);
-                                --*(b - MulZ);
-                                --*(b + MulX);
-                                --*(b + MulY);
-                                --*(b + MulZ);
-                            }
-                        }
-                        while (extensionStack.Count != innerOriginalLength)
-                            extensionStack.Pop(); // maybe replace this w/ custom stack to avoid this loop
-                    }
-                }
-
-                if (existingRequirement) {
-                    requiredCells.Add((x, y, z));
-                    break; // this required cell will no longer be available in the extension stack,
-                    // so no more valid polycubes are possible in this branch
-                }
-
-                // transform and remove required cells until we get back to the original cell
-                for (int tempX = x, tempY = y, tempZ = z;;) {
-                    (tempX, tempY, tempZ) = (
-                        linearMap[0] * tempX + linearMap[1] * tempY + linearMap[2] * tempZ + affineShift[0],
-                        linearMap[3] * tempX + linearMap[4] * tempY + linearMap[5] * tempZ + affineShift[1],
-                        linearMap[6] * tempX + linearMap[7] * tempY + linearMap[8] * tempZ + affineShift[2]);
-                    if (x == tempX && y == tempY && z == tempZ) break;
-                    requiredCells.Remove((tempX, tempY, tempZ));
-                }
+                while (extensionStack.Count != originalLength)
+                    extensionStack.Push(recoveryStack.Pop());
+                return count;
             }
-            while (extensionStack.Count != originalLength)
-                extensionStack.Push(recoveryStack.Pop());
-            return count;
         }
     }
 
@@ -654,110 +657,99 @@ public static class Program {
         unsafe {
             // could use ints or shorts as offsets to save memory, but it's faster to directly store the
             // pointers to avoid adding pointer offsets at every lookup
-            byte[] byteBoard = new byte[(N + 2) * Z];
+            byte* byteBoard = stackalloc byte[(N + 2) * Z];
             // the first Z + 1 bytes are disallowed extensions; first Z are less than the minimum,
             // last 1 due to edge case of initial polycube having no neighbours
-            Array.Fill(byteBoard, (byte)255, Z + 1, byteBoard.Length - Z - 1);
+            for (byte* di = byteBoard + Z + 1, ei = byteBoard + (N + 2) * Z; di != ei;)
+                *di++ = 255;
 
             // total length of the two stacks is at most 4n-9. One stack grows from the left, the other
             // stack grows from the right
-            int[] refStack = new int[(N - 2) * 4];
+            byte** refStack = stackalloc byte*[(N - 2) * 4];
+            //int[] refStack = new int[(N - 2) * 4];
             // seeded with first index of the byte board as the only allowed extension
-            refStack[0] = Z;
+            refStack[0] = byteBoard + Z;
 
-            return CountExtensions(byteBoard, refStack, filter, N, 1, refStack.Length);
+            return CountExtensions(filter, N, refStack, 1, (N - 2) * 4);
 
-            static Num CountExtensions(byte[] byteBoard, int[] refStack, int filter, int depth, int stackPtr,
-                int stackLimit) {
+            static Num CountExtensions(int filter, int depth, byte** refStack, int stackPtr, int stackLimit) {
                 Num count = 0;
                 int stackTopOriginal = stackPtr;
                 while (stackPtr != 0) {
-                    int index = refStack[--stackPtr];
-                    fixed (byte* bp = &byteBoard[index]) {
-                        int stackTopInner = stackPtr;
+                    byte *j = refStack[--stackPtr];
+                    int stackTopInner = stackPtr;
 
-                        if (++*(bp - X) == 0) refStack[stackTopInner++] = index - X;
-                        if (++*(bp - Y) == 0) refStack[stackTopInner++] = index - Y;
-                        if (++*(bp - Z) == 0) refStack[stackTopInner++] = index - Z;
-                        if (++*(bp + X) == 0) refStack[stackTopInner++] = index + X;
-                        if (++*(bp + Y) == 0) refStack[stackTopInner++] = index + Y;
-                        if (++*(bp + Z) == 0) refStack[stackTopInner++] = index + Z;
+                    if (++*(j - X) == 0) refStack[stackTopInner++] = j - X;
+                    if (++*(j - Y) == 0) refStack[stackTopInner++] = j - Y;
+                    if (++*(j - Z) == 0) refStack[stackTopInner++] = j - Z;
+                    if (++*(j + X) == 0) refStack[stackTopInner++] = j + X;
+                    if (++*(j + Y) == 0) refStack[stackTopInner++] = j + Y;
+                    if (++*(j + Z) == 0) refStack[stackTopInner++] = j + Z;
 
-                        if (depth == 4) {
-                            int stackTop = stackTopInner;
-                            int length = stackTop;
-                            count += (Num)(length * (length - 1) * (length - 2) / 6);
-                            int stackTopTemp = stackTop;
-                            for (int lengthPlus = (length << 1) - 511; stackTopTemp != 0;) {
-                                int i = refStack[--stackTopTemp];
-                                fixed (byte* b = &byteBoard[i]) {
-                                    int neighbours = 0, subCount = 128;
-                                    if (*(b - X) > 127) {
-                                        count += --*(b - X);
-                                        subCount += *(b - X - X) + *(b - X - Y) + *(b - X - Z) + *(b - X + Y) +
-                                                    *(b - X + Z);
-                                        neighbours++;
-                                    }
-                                    if (*(b - Y) > 127) {
-                                        count += --*(b - Y);
-                                        subCount += *(b - Y - Y) + *(b - Y - X) + *(b - Y - Z) + *(b - Y + X) +
-                                                    *(b - Y + Z);
-                                        neighbours++;
-                                    }
-                                    if (*(b - Z) > 127) {
-                                        count += --*(b - Z);
-                                        subCount += *(b - Z - Z) + *(b - Z - X) + *(b - Z - Y) + *(b - Z + X) +
-                                                    *(b - Z + Y);
-                                        neighbours++;
-                                    }
-                                    if (*(b + X) > 127) {
-                                        count += --*(b + X);
-                                        subCount += *(b + X + X) + *(b + X + Y) + *(b + X + Z) + *(b + X - Y) +
-                                                    *(b + X - Z);
-                                        neighbours++;
-                                    }
-                                    if (*(b + Y) > 127) {
-                                        count += --*(b + Y);
-                                        subCount += *(b + Y + Y) + *(b + Y + X) + *(b + Y + Z) + *(b + Y - X) +
-                                                    *(b + Y - Z);
-                                        neighbours++;
-                                    }
-                                    if (*(b + Z) > 127) {
-                                        count += --*(b + Z);
-                                        subCount += *(b + Z + Z) + *(b + Z + X) + *(b + Z + Y) + *(b + Z - X) +
-                                                    *(b + Z - Y);
-                                        neighbours++;
-                                    }
-                                    count += (Num)((subCount >> 8) + (neighbours * (neighbours + lengthPlus) >> 1));
-                                }
+                    if (depth == 4) {
+                        int stackTop = stackTopInner;
+                        int length = stackTop;
+                        count += (Num)(length * (length - 1) * (length - 2) / 6);
+                        int stackTopTemp = stackTop;
+                        for (int lengthPlus = (length << 1) - 511; stackTopTemp != 0;) {
+                            byte* i = refStack[--stackTopTemp];
+                            int neighbours = 0, subCount = 128;
+                            if (*(i - X) > 127) {
+                                count += --*(i - X);
+                                subCount += *(i - X - X) + *(i - X - Y) + *(i - X - Z) + *(i - X + Y) + *(i - X + Z);
+                                neighbours++;
                             }
-                            while (stackTop != 0) {
-                                int i = refStack[--stackTop];
-                                fixed (byte* b = &byteBoard[i]) {
-                                    *(b - X) |= (byte)(*(b - X) >> 4);
-                                    *(b - Y) |= (byte)(*(b - Y) >> 4);
-                                    *(b - Z) |= (byte)(*(b - Z) >> 4);
-                                    *(b + X) |= (byte)(*(b + X) >> 4);
-                                    *(b + Y) |= (byte)(*(b + Y) >> 4);
-                                    *(b + Z) |= (byte)(*(b + Z) >> 4);
-                                }
+                            if (*(i - Y) > 127) {
+                                count += --*(i - Y);
+                                subCount += *(i - Y - Y) + *(i - Y - X) + *(i - Y - Z) + *(i - Y + X) + *(i - Y + Z);
+                                neighbours++;
                             }
-                        } else if (depth != FilterDepth || stackPtr == filter) {
-                            // if multithreading is not wanted, remove "if (condition)" from this else statement
-                            count += CountExtensions(byteBoard, refStack, filter, depth - 1, stackTopInner, stackLimit);
+                            if (*(i - Z) > 127) {
+                                count += --*(i - Z);
+                                subCount += *(i - Z - Z) + *(i - Z - X) + *(i - Z - Y) + *(i - Z + X) + *(i - Z + Y);
+                                neighbours++;
+                            }
+                            if (*(i + X) > 127) {
+                                count += --*(i + X);
+                                subCount += *(i + X + X) + *(i + X + Y) + *(i + X + Z) + *(i + X - Y) + *(i + X - Z);
+                                neighbours++;
+                            }
+                            if (*(i + Y) > 127) {
+                                count += --*(i + Y);
+                                subCount += *(i + Y + Y) + *(i + Y + X) + *(i + Y + Z) + *(i + Y - X) + *(i + Y - Z);
+                                neighbours++;
+                            }
+                            if (*(i + Z) > 127) {
+                                count += --*(i + Z);
+                                subCount += *(i + Z + Z) + *(i + Z + X) + *(i + Z + Y) + *(i + Z - X) + *(i + Z - Y);
+                                neighbours++;
+                            }
+                            count += (Num)((subCount >> 8) + (neighbours * (neighbours + lengthPlus) >> 1));
                         }
-
-                        --*(bp - X);
-                        --*(bp - Y);
-                        --*(bp - Z);
-                        --*(bp + X);
-                        --*(bp + Y);
-                        --*(bp + Z);
+                        while (stackTop != 0) {
+                            byte* i = refStack[--stackTop];
+                            *(i - X) |= (byte)(*(i - X) >> 4);
+                            *(i - Y) |= (byte)(*(i - Y) >> 4);
+                            *(i - Z) |= (byte)(*(i - Z) >> 4);
+                            *(i + X) |= (byte)(*(i + X) >> 4);
+                            *(i + Y) |= (byte)(*(i + Y) >> 4);
+                            *(i + Z) |= (byte)(*(i + Z) >> 4);
+                        }
+                    } else if (depth != FilterDepth || stackPtr == filter) {
+                        // if multithreading is not wanted, remove "if (condition)" from this else statement
+                        count += CountExtensions(filter, depth - 1, refStack, stackTopInner, stackLimit);
                     }
 
+                    --*(j - X);
+                    --*(j - Y);
+                    --*(j - Z);
+                    --*(j + X);
+                    --*(j + Y);
+                    --*(j + Z);
+                    
                     // doing this push before the recursion would add one extra unnecessary element to the stack
                     // at each level of recursion
-                    refStack[--stackLimit] = index;
+                    refStack[--stackLimit] = j;
                 }
 
                 while (stackPtr != stackTopOriginal) {

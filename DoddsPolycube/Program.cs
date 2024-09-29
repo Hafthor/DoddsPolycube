@@ -62,7 +62,8 @@ public class Program {
     private static readonly string[] BenchmarkArgs = ["--benchmark", "--nomulti", "--noload", "--nosave"];
     
     // Benchmarks are run with N=16 and FilterDepth=5 and Num is ulong
-    // OS=macOS Sequoia, CPU=M2 Max
+    // OS=macOS Sequoia, CPU=M2 Max, .NET 8.0 64-bit
+
     [Benchmark] // 47.691s 45MB
     public int BenchmarkNonTrivial() => Main([..BenchmarkArgs, "-1"]);
 

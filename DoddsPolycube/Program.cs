@@ -51,7 +51,7 @@ using System.Diagnostics;
 [MemoryDiagnoser(false)]
 public class Program {
     // we specify N as a constant because it makes the program run slightly faster 
-    private const int N = 11; // number of polycube cells. Need N >= 6 and > FilterDepth 
+    private const int N = 16; // number of polycube cells. Need N >= 6 and > FilterDepth 
 
     // make sure type Num is big enough for a(N) * 24
     private const int FilterDepth = 5; // >=5 && <N
@@ -61,25 +61,27 @@ public class Program {
 
     private static readonly string[] BenchmarkArgs = ["--benchmark", "--nomulti", "--noload", "--nosave"];
     
-    [Benchmark] // 168.5ms
+    // Benchmarks are run with N=16 and FilterDepth=5 and Num is ulong
+    // OS=macOS Sequoia, CPU=M2 Max
+    [Benchmark] // 47.691s 45MB
     public int BenchmarkNonTrivial() => Main([..BenchmarkArgs, "-1"]);
 
-    [Benchmark] // 165.8ms - only 2.7ms faster than non-trivial (1.6%)
+    [Benchmark] // 47.418s 8MB - only 0.6% faster
     public int BenchmarkNonTrivialUnsafe() => Main([..BenchmarkArgs, "--useunsafe", "-1"]);
 
-    [Benchmark] // 484.9us
+    [Benchmark] // 7.231s 4.23KB
     public int BenchmarkTrivial() => Main([..BenchmarkArgs, "0"]);
 
-    [Benchmark] // 799.6us (65.2% slower)
+    [Benchmark] // 11.839s 5.91KB (64.1% slower)
     public int BenchmarkTrivialSafe() => Main([..BenchmarkArgs, "--usesafe", "0"]);
 
-    [Benchmark] // 486.7us (0.4% slower)
+    [Benchmark] // 7.359s 4.24KB (1.6% slower)
     public int BenchmarkTrivialLessUnsafe() => Main([..BenchmarkArgs, "--uselessunsafe", "0"]);
 
     private static int Main(string[] args) {
         if (args is ["--benchmark"]) {
-            Contract.Assert(N == 11 && FilterDepth == 5 && typeof(Num) is ulong,
-                "Benchmark requires N=11 and FilterDepth=5 and Num is ulong");
+            Contract.Assert(N == 16 && FilterDepth == 5 && typeof(Num) is ulong,
+                "Benchmark requires N=16 and FilterDepth=5 and Num is ulong");
             BenchmarkRunner.Run<Program>();
             return 0;
         }

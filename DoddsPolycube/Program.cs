@@ -38,12 +38,12 @@ namespace DoddsPolycube;
 // 21		 1,636,229,771,639,924 ## 26:33+? = est. 12.7d
 // 22		12,766,882,202,755,783 ## 2:16:09+? = est. 100d  ##  x24 = 312e15 (ulong limit is 18.44e18)
 // 23 est   99.9027e15             ## 4:39:38+? = est. 2y    ##  x24 = 2.39766e18 (ulong is big enough)
-// 24 est  783.7570e15             ## ?+?       = est. 16y   ##  x24 = 18.8102e18 (UInt128 limit is 3.4e36, ulong is not quite big enough)
+// 24 est  783.7570e15             ## 13:49:37+?= est. 16y   ##  x24 = 18.8102e18 (UInt128 limit is 3.4e36, ulong is not quite big enough)
 // ...
 // 45 est    4.9048e36  ##  x24 = 117.715e36 (UInt128 is big enough)
 // 46 est   37.5306e36  ##  x24 = 900.735e36 (need to switch to BigInteger)
 
-using Num = ulong; // int, uint when n=13, ulong when n>=14, UInt128 when n>=24, BitInteger when n>45
+using Num = UInt128; // int, uint when n=13, ulong when n>=14, UInt128 when n>=24, BitInteger when n>45
 
 using System.Diagnostics;
 // using System.Numerics; // for BigInteger
@@ -51,7 +51,7 @@ using System.Diagnostics;
 [MemoryDiagnoser(false)]
 public class Program {
     // we specify N as a constant because it makes the program run slightly faster 
-    private const int N = 16; // number of polycube cells. Need N >= 6 and > FilterDepth 
+    private const int N = 24; // number of polycube cells. Need N >= 6 and > FilterDepth 
 
     // make sure type Num is big enough for a(N) * 24
     private const int FilterDepth = 5; // >=5 && <N

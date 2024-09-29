@@ -1,4 +1,7 @@
-﻿using System.Text;
+﻿using System.Diagnostics.Contracts;
+using System.Text;
+using BenchmarkDotNet.Attributes;
+using BenchmarkDotNet.Running;
 
 namespace DoddsPolycube;
 
@@ -32,10 +35,11 @@ namespace DoddsPolycube;
 // 18		     3,516,009,200,564 ## 55+37:36 = 38:31
 // 19		    27,144,143,923,583 ## 2:23+04:59:14 = 05:01:38
 // 20		   210,375,361,379,518 ## 8:50+1d 15:10:45=1d 15:19:35
-// 21		 1,636,229,771,639,924 ## est. 12.7d
-// 22		12,766,882,202,755,783 ## est. 100d  ##  x24 = 312e15 (ulong limit is 18.44e18)
-// 23 est   99.9027e15 ## est. 2y  ##  x24 = 2.39766e18 (ulong is big enough)
-// 24 est  783.7570e15 ## est. 16y ##  x24 = 18.8102e18 (UInt128 limit is 3.4e36, ulong is not quite big enough)
+// 21		 1,636,229,771,639,924 ## 26:33+? = est. 12.7d
+// 22		12,766,882,202,755,783 ## 2:16:09+? = est. 100d  ##  x24 = 312e15 (ulong limit is 18.44e18)
+// 23 est   99.9027e15             ## 4:39:38+? = est. 2y    ##  x24 = 2.39766e18 (ulong is big enough)
+// 24 est  783.7570e15             ## ?+?       = est. 16y   ##  x24 = 18.8102e18 (UInt128 limit is 3.4e36, ulong is not quite big enough)
+// ...
 // 45 est    4.9048e36  ##  x24 = 117.715e36 (UInt128 is big enough)
 // 46 est   37.5306e36  ##  x24 = 900.735e36 (need to switch to BigInteger)
 
@@ -44,9 +48,10 @@ using Num = ulong; // int, uint when n=13, ulong when n>=14, UInt128 when n>=24,
 using System.Diagnostics;
 // using System.Numerics; // for BigInteger
 
-public static class Program {
+[MemoryDiagnoser(false)]
+public class Program {
     // we specify N as a constant because it makes the program run slightly faster 
-    private const int N = 16; // number of polycube cells. Need N >= 6 and > FilterDepth 
+    private const int N = 11; // number of polycube cells. Need N >= 6 and > FilterDepth 
 
     // make sure type Num is big enough for a(N) * 24
     private const int FilterDepth = 5; // >=5 && <N
@@ -54,7 +59,31 @@ public static class Program {
     // this is the maximum left stack length, which is the value being filtered to separate work
     private const int MaxLeftStackLen = 4 * (N - FilterDepth) - 2;
 
+    private static readonly string[] BenchmarkArgs = ["--benchmark", "--nomulti", "--noload", "--nosave"];
+    
+    [Benchmark] // 168.5ms
+    public int BenchmarkNonTrivial() => Main([..BenchmarkArgs, "-1"]);
+
+    [Benchmark] // 165.8ms - only 2.7ms faster than non-trivial (1.6%)
+    public int BenchmarkNonTrivialUnsafe() => Main([..BenchmarkArgs, "--useunsafe", "-1"]);
+
+    [Benchmark] // 484.9us
+    public int BenchmarkTrivial() => Main([..BenchmarkArgs, "0"]);
+
+    [Benchmark] // 799.6us (65.2% slower)
+    public int BenchmarkTrivialSafe() => Main([..BenchmarkArgs, "--usesafe", "0"]);
+
+    [Benchmark] // 486.7us (0.4% slower)
+    public int BenchmarkTrivialLessUnsafe() => Main([..BenchmarkArgs, "--uselessunsafe", "0"]);
+
     private static int Main(string[] args) {
+        if (args is ["--benchmark"]) {
+            Contract.Assert(N == 11 && FilterDepth == 5 && typeof(Num) is ulong,
+                "Benchmark requires N=11 and FilterDepth=5 and Num is ulong");
+            BenchmarkRunner.Run<Program>();
+            return 0;
+        }
+        
         if (N < 6) throw new InvalidOperationException("N must be at least 6");
         if (FilterDepth >= N) throw new InvalidOperationException("FilterDepth must be less than N");
         if (FilterDepth < 5) throw new InvalidOperationException("FilterDepth must be at least 5 for multithreading");
@@ -77,43 +106,45 @@ public static class Program {
            total count for nontrivial symmetries is 8,460,765 for polycubes with 16 cells - Elapsed: 00:01:56.8297006
          */
 
-        Console.WriteLine($"Dodds Polycube - N={N}, FilterDepth={FilterDepth}, NumType={numType}");
         HashSet<string> include = [..args];
+        bool extraQuiet = include.Remove("--benchmark");
+        if (!extraQuiet)
+            Console.WriteLine($"Dodds Polycube - N={N}, FilterDepth={FilterDepth}, NumType={numType}");
         bool help = include.Remove("-h") || include.Remove("--help");
         bool showHelp = help || args.Length == 0;
-        
+
         if (showHelp)
             Console.WriteLine($"You can specify which symmetries to include as arguments (0-{
                 MaxLeftStackLen}), -1 for non-trivial symmetries.");
-        
+
         bool useUnsafe = include.Remove("--useunsafe");
         if (showHelp)
             Console.WriteLine("--useunsafe for unsafe method for non-trivial symmetries (not really faster).");
-        
+
         bool useSafe = include.Remove("--usesafe");
         if (showHelp)
             Console.WriteLine("--usesafe for safe method for trivial symmetries (slower).");
-        
+
         bool useLessUnsafe = include.Remove("--uselessunsafe");
         if (showHelp)
             Console.WriteLine("--uselessunsafe for a less unsafe method on trivial symmetries (a bit slower).");
-        
+
         bool noLoad = include.Remove("--noload");
         if (showHelp)
             Console.WriteLine("--noload to not load prior work.");
-        
+
         bool noSave = include.Remove("--nosave");
         if (showHelp)
             Console.WriteLine("--nosave to not save new work.");
-        
-        bool quiet = include.Remove("--quiet");
+
+        bool quiet = include.Remove("--quiet") || extraQuiet;
         if (showHelp)
             Console.WriteLine("--quiet to not print progress.");
-        
+
         bool noMulti = include.Remove("--nomulti");
-        if (showHelp) 
+        if (showHelp)
             Console.WriteLine("--nomulti to not use multithreading.");
-        
+
         if (help)
             return 0;
         if (showHelp)
@@ -133,7 +164,7 @@ public static class Program {
         Num totalCount = 0;
         var swTotal = Stopwatch.StartNew();
         if (include.Count == 0 || include.Contains("-1")) {
-            Console.WriteLine("Phase 1/2: nontrivial symmetries");
+            if (!extraQuiet) Console.WriteLine("Phase 1/2: nontrivial symmetries");
 
             var filename = $"nontrivial_{N}.txt";
             if (!noLoad && File.Exists(filename)) {
@@ -142,7 +173,7 @@ public static class Program {
                 totalCount = Num.Parse(line0[0]);
                 //var elapsed = TimeSpan.Parse(line0[1]);
                 for (int i = 1; i < lines.Length; i++)
-                    Console.WriteLine(lines[i]);
+                    if (!extraQuiet) Console.WriteLine(lines[i]);
             } else {
                 Stopwatch sw = Stopwatch.StartNew();
                 string[] descriptions = [
@@ -201,13 +232,13 @@ public static class Program {
                 StringBuilder sb = new();
                 var s = $"Starting {tasks.Count} tasks - start time: {DateTime.Now}";
                 sb.AppendLine(s);
-                Console.WriteLine(s);
+                if (!extraQuiet) Console.WriteLine(s);
 
                 if (noMulti)
                     foreach (var task in tasks)
                         task();
                 else
-                    Parallel.Invoke(new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, 
+                    Parallel.Invoke(new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
                         tasks.ToArray());
 
                 for (int sym = 0; sym < 4; sym++) {
@@ -215,7 +246,7 @@ public static class Program {
                     s = $"    {sym}: {subCount:N0} polycubes fixed under each {descriptions[sym]} rotation - *{
                         autClassSizes[sym]} = {subCountMul:N0}";
                     sb.AppendLine(s);
-                    Console.WriteLine(s);
+                    if (!extraQuiet) Console.WriteLine(s);
 
                     totalCount += subCountMul;
                 }
@@ -223,16 +254,16 @@ public static class Program {
                 s = $"total count for nontrivial symmetries is {totalCount:N0} for polycubes with {
                     N} cells - Elapsed: {sw.Elapsed}, CPU time: {elapsed}";
                 sb.AppendLine(s);
-                Console.WriteLine(s);
+                if (!extraQuiet) Console.WriteLine(s);
 
                 sb.Insert(0, $"{totalCount} {sw.Elapsed}{Environment.NewLine}");
                 if (!noSave) File.WriteAllText(filename, sb.ToString());
             }
-            if (include.Remove("-1") && include.Count == 0) return 0;
-            Console.WriteLine();
+            if (include.Contains("-1") && include.Count == 1) return 0;
+            if (!extraQuiet) Console.WriteLine();
         }
 
-        Console.WriteLine("Phase 2/2: trivial symmetries");
+        if (!extraQuiet) Console.WriteLine("Phase 2/2: trivial symmetries");
         var sw2 = Stopwatch.StartNew();
         List<Action> tasks2 = [];
         Num subCount2 = 0;
@@ -249,7 +280,7 @@ public static class Program {
                 subCount2 += Num.Parse(line0[0]);
                 cpuTime += TimeSpan.Parse(line0[1]);
                 for (int i = 1; i < lines.Length; i++)
-                    Console.WriteLine(lines[i]);
+                    if (!extraQuiet) Console.WriteLine(lines[i]);
             } else {
                 int filter = j; // copy, since lambda expression captures the variable
                 tasks2.Add(() => {
@@ -272,7 +303,7 @@ public static class Program {
             }
         }
 
-        Console.WriteLine($"Starting {tasks2.Count} tasks - start time: {DateTime.Now}");
+        if (!extraQuiet) Console.WriteLine($"Starting {tasks2.Count} tasks - start time: {DateTime.Now}");
 
         if (noMulti)
             foreach (var task in tasks2)
@@ -281,19 +312,19 @@ public static class Program {
             Parallel.Invoke(new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
                 tasks2.ToArray());
 
-        Console.WriteLine($"{subCount2:N0} polycubes with {
+        if (!extraQuiet) Console.WriteLine($"{subCount2:N0} polycubes with {
             N} cells (number of polycubes fixed by trivial symmetry) - Elapsed: {sw2.Elapsed}, CPU time: {cpuTime}");
 
         totalCount += subCount2;
 
         if (include.Count == 0) {
-            Console.WriteLine();
+            if (!extraQuiet) Console.WriteLine();
             totalCount /= 24;
-            Console.WriteLine($"{totalCount:N0} free polycubes with {N} cells - Elapsed: {swTotal.Elapsed}");
+            if (!extraQuiet) Console.WriteLine($"{totalCount:N0} free polycubes with {N} cells - Elapsed: {swTotal.Elapsed}");
         }
 
-        Console.WriteLine($"Done - end time: {DateTime.Now}");
-        return 0;
+        if (!extraQuiet) Console.WriteLine($"Done - end time: {DateTime.Now}");
+        return extraQuiet ? (int)totalCount : 0;
     }
 
     const int MulX = 1, MulY = 2 * N + 1, MulZ = MulY * (2 * N + 1);
@@ -384,7 +415,7 @@ public static class Program {
             // adjacencyCounts is a 3D array, but we're using a 1D array to store it
             // order is z, y, x - use mulX/Y/Z to get the correct index
             //var adjacencyCounts = new byte[(N + 2) * MulZ];
-            byte *adjacencyCounts = stackalloc byte[(N + 2) * MulZ];
+            byte* adjacencyCounts = stackalloc byte[(N + 2) * MulZ];
             // we set the first Z layer, the first N layers of Y and the first N+1 layers of X to 1
             //Array.Fill(adjacencyCounts, (byte)1, 0, MulZ + N * MulY + N + 1);
             for (byte* i = adjacencyCounts, j = adjacencyCounts + MulZ + N * MulY + N + 1; i != j;)
@@ -623,48 +654,49 @@ public static class Program {
                     int stackTopTemp = stackTop;
                     for (int lengthPlus = (length << 1) - 511; stackTopTemp != 0;) {
                         byte[] b = byteBoard;
-                        int i = refStack[--stackTopTemp];
+                        int i = refStack[--stackTopTemp], ii;
                         int neighbours = 0, subCount = 128;
-                        if (b[i - X] > 127) {
-                            count += --b[i - X];
-                            subCount += b[i - X - X] + b[i - X - Y] + b[i - X - Z] + b[i - X + Y] + b[i - X + Z];
+                        byte v;
+                        if ((v = b[ii = i - X]) > 127) {
+                            count += b[ii] = --v;
+                            subCount += b[ii - X] + b[ii - Y] + b[ii - Z] + b[ii + Y] + b[ii + Z];
                             neighbours++;
                         }
-                        if (b[i - Y] > 127) {
-                            count += --b[i - Y];
-                            subCount += b[i - Y - Y] + b[i - Y - X] + b[i - Y - Z] + b[i - Y + X] + b[i - Y + Z];
+                        if ((v = b[ii = i - Y]) > 127) {
+                            count += b[ii] = --v;
+                            subCount += b[ii - Y] + b[ii - X] + b[ii - Z] + b[ii + X] + b[ii + Z];
                             neighbours++;
                         }
-                        if (b[i - Z] > 127) {
-                            count += --b[i - Z];
-                            subCount += b[i - Z - Z] + b[i - Z - X] + b[i - Z - Y] + b[i - Z + X] + b[i - Z + Y];
+                        if ((v = b[ii = i - Z]) > 127) {
+                            count += b[ii] = --v;
+                            subCount += b[ii - Z] + b[ii - X] + b[ii - Y] + b[ii + X] + b[ii + Y];
                             neighbours++;
                         }
-                        if (b[i + X] > 127) {
-                            count += --b[i + X];
-                            subCount += b[i + X + X] + b[i + X + Y] + b[i + X + Z] + b[i + X - Y] + b[i + X - Z];
+                        if ((v = b[ii = i + X]) > 127) {
+                            count += b[ii] = --v;
+                            subCount += b[ii + X] + b[ii + Y] + b[ii + Z] + b[ii - Y] + b[ii - Z];
                             neighbours++;
                         }
-                        if (b[i + Y] > 127) {
-                            count += --b[i + Y];
-                            subCount += b[i + Y + Y] + b[i + Y + X] + b[i + Y + Z] + b[i + Y - X] + b[i + Y - Z];
+                        if ((v = b[ii = i + Y]) > 127) {
+                            count += b[ii] = --v;
+                            subCount += b[ii + Y] + b[ii + X] + b[ii + Z] + b[ii - X] + b[ii - Z];
                             neighbours++;
                         }
-                        if (b[i + Z] > 127) {
-                            count += --b[i + Z];
-                            subCount += b[i + Z + Z] + b[i + Z + X] + b[i + Z + Y] + b[i + Z - X] + b[i + Z - Y];
+                        if ((v = b[i + Z]) > 127) {
+                            count += b[ii = i + Z] = --v;
+                            subCount += b[ii + Z] + b[ii + X] + b[ii + Y] + b[ii - X] + b[ii - Y];
                             neighbours++;
                         }
                         count += (Num)((subCount >> 8) + (neighbours * (neighbours + lengthPlus) >> 1));
                     }
                     while (stackTop != 0) {
-                        int i = refStack[--stackTop];
-                        byteBoard[i - X] |= (byte)(byteBoard[i - X] >> 4);
-                        byteBoard[i - Y] |= (byte)(byteBoard[i - Y] >> 4);
-                        byteBoard[i - Z] |= (byte)(byteBoard[i - Z] >> 4);
-                        byteBoard[i + X] |= (byte)(byteBoard[i + X] >> 4);
-                        byteBoard[i + Y] |= (byte)(byteBoard[i + Y] >> 4);
-                        byteBoard[i + Z] |= (byte)(byteBoard[i + Z] >> 4);
+                        int i = refStack[--stackTop], ii;
+                        byteBoard[ii = i - X] |= (byte)(byteBoard[ii] >> 4);
+                        byteBoard[ii = i - Y] |= (byte)(byteBoard[ii] >> 4);
+                        byteBoard[ii = i - Z] |= (byte)(byteBoard[ii] >> 4);
+                        byteBoard[ii = i + X] |= (byte)(byteBoard[ii] >> 4);
+                        byteBoard[ii = i + Y] |= (byte)(byteBoard[ii] >> 4);
+                        byteBoard[ii = i + Z] |= (byte)(byteBoard[ii] >> 4);
                     }
                 } else if (depth != FilterDepth || stackPtr == filter) {
                     // if multithreading is not wanted, remove "if (condition)" from this else statement
@@ -713,7 +745,7 @@ public static class Program {
                 Num count = 0;
                 int stackTopOriginal = stackPtr;
                 while (stackPtr != 0) {
-                    byte *j = refStack[--stackPtr];
+                    byte* j = refStack[--stackPtr];
                     int stackTopInner = stackPtr;
 
                     if (++*(j - X) == 0) refStack[stackTopInner++] = j - X;
@@ -783,7 +815,7 @@ public static class Program {
                     --*(j + X);
                     --*(j + Y);
                     --*(j + Z);
-                    
+
                     // doing this push before the recursion would add one extra unnecessary element to the stack
                     // at each level of recursion
                     refStack[--stackLimit] = j;

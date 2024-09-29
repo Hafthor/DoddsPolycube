@@ -78,6 +78,8 @@ public class Program {
 
     [Benchmark] // 7.359s 4.24KB (1.6% slower)
     public int BenchmarkTrivialLessUnsafe() => Main([..BenchmarkArgs, "--uselessunsafe", "0"]);
+    
+    // C version ran in 6.29s (15% faster) 
 
     private static int Main(string[] args) {
         if (args is ["--benchmark"]) {

@@ -114,7 +114,9 @@ public class Program {
         HashSet<string> include = [..args];
         bool extraQuiet = include.Remove("--benchmark");
         if (!extraQuiet)
-            Console.WriteLine($"Dodds Polycube - N={N}, FilterDepth={FilterDepth}, NumType={numType}");
+            Console.WriteLine($"Dodds Polycube - N={N}, FilterDepth={FilterDepth}, MaxLeftStackLen={
+                MaxLeftStackLen}, NumType={numType}, X,Y,Z,Z*(N+2)={X},{Y},{Z},{Z * (N + 2)} MulX,Y,Z,Z*(N+2)={
+                    MulX},{MulY},{MulZ},{MulZ * (N + 2)}");
         bool help = include.Remove("-h") || include.Remove("--help");
         bool showHelp = help || args.Length == 0;
 
@@ -150,6 +152,12 @@ public class Program {
         if (showHelp)
             Console.WriteLine("--nomulti to not use multithreading.");
 
+        int maxDop = -int.Parse(include.FirstOrDefault(i => int.TryParse(i, out int j) && j < -1,
+            "-" + Environment.ProcessorCount));
+        include.Remove("-" + maxDop);
+        if (showHelp)
+            Console.WriteLine($"-n to specify the number of threads (default is {Environment.ProcessorCount}).");
+        
         if (help)
             return 0;
         if (showHelp)
@@ -243,7 +251,7 @@ public class Program {
                     foreach (var task in tasks)
                         task();
                 else
-                    Parallel.Invoke(new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                    Parallel.Invoke(new ParallelOptions { MaxDegreeOfParallelism = maxDop },
                         tasks.ToArray());
 
                 for (int sym = 0; sym < 4; sym++) {
@@ -314,7 +322,7 @@ public class Program {
             foreach (var task in tasks2)
                 task();
         else
-            Parallel.Invoke(new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+            Parallel.Invoke(new ParallelOptions { MaxDegreeOfParallelism = maxDop },
                 tasks2.ToArray());
 
         if (!extraQuiet) Console.WriteLine($"{subCount2:N0} polycubes with {

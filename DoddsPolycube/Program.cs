@@ -62,28 +62,28 @@ public class Program {
     private static readonly string[] BenchmarkArgs = ["--benchmark", "--nomulti", "--noload", "--nosave"];
     
     // Benchmarks are run with N=16 and FilterDepth=5 and Num is ulong
-    // OS=macOS Sequoia, CPU=M2 Max, .NET 8.0 64-bit
+    // OS=macOS Sequoia, CPU=M2 Max, .NET 8.0 64-bit, .NET 9.0 64-bit
 
-    [Benchmark] // 47.691s 45MB
+    [Benchmark] // 47.691s 45MB, 43.485s 45MB
     public int BenchmarkNonTrivial() => Main([..BenchmarkArgs, "-1"]);
 
-    [Benchmark] // 47.418s 8MB - only 0.6% faster
+    [Benchmark] // 47.418s 8MB, 41.836s 8MB - only 0.6% faster, 4% (13.3% faster on .NET 9.0)
     public int BenchmarkNonTrivialUnsafe() => Main([..BenchmarkArgs, "--useunsafe", "-1"]);
 
-    [Benchmark] // 7.231s 4.23KB
+    [Benchmark] // 7.231s 4.23KB, 7.247s 3.81KB
     public int BenchmarkTrivial() => Main([..BenchmarkArgs, "0"]);
 
-    [Benchmark] // 11.839s 5.91KB (64.1% slower)
+    [Benchmark] // 11.839s 5.91KB (64.1% slower), 11.902s 5.49KB
     public int BenchmarkTrivialSafe() => Main([..BenchmarkArgs, "--usesafe", "0"]);
 
-    [Benchmark] // 7.359s 4.24KB (1.6% slower)
+    [Benchmark] // 7.359s 4.24KB (1.6% slower), 7.473s 3.82KB
     public int BenchmarkTrivialLessUnsafe() => Main([..BenchmarkArgs, "--uselessunsafe", "0"]);
     
     // C version ran in 6.29s (15% faster) 
 
     private static int Main(string[] args) {
         if (args is ["--benchmark"]) {
-            Contract.Assert(N == 16 && FilterDepth == 5 && typeof(Num) is ulong,
+            Contract.Assert(N == 16 && FilterDepth == 5 && Num.MaxValue == ulong.MaxValue,
                 "Benchmark requires N=16 and FilterDepth=5 and Num is ulong");
             BenchmarkRunner.Run<Program>();
             return 0;

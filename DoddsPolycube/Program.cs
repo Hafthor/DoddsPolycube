@@ -103,6 +103,14 @@ public class Program {
         };
         if (!numTypeOk) throw new InvalidOperationException($"Num type ({numType}) is not big enough for N ({N})");
 
+        bool numTypeTooBig = numType switch {
+            "BigInteger" => N <= 45,
+            "Int128" or "UInt128" => N <= 23,
+            "Int64" or "UInt64" => N <= 13,
+            _ => false,
+        };
+        if (numTypeTooBig) Console.WriteLine($"Warning: Num type ({numType}) is bigger than it needs to be for N ({N})");
+
         /* n=16
            1,504,619 polycubes fixed under each orthogonal order 2 rotation - *3 = 4,513,857
            277 polycubes fixed under each orthogonal order 4 rotation - *6 = 1,662
@@ -352,11 +360,12 @@ public class Program {
         HashSet<(int, int, int)> requiredCells = []; // note that x, y, z may be negative
         Stack<(int, int, int)> recoveryStack = new(), extensionStack = new();
         extensionStack.Push((N, N, 1));
-        return CountExtensions(N);
+        Num count = 0;
+        CountExtensions(N);
+        return count;
 
-        Num CountExtensions(int cellsToAdd) {
+        void CountExtensions(int cellsToAdd) {
             cellsToAdd--;
-            Num count = 0;
             int originalLength = extensionStack.Count;
             while (extensionStack.Count > 0) {
                 int x, y, z; // x, y, z are always positive
@@ -389,7 +398,7 @@ public class Program {
                         if (adjacencyCounts[xyz + MulY]++ == 0) extensionStack.Push((x, y + 1, z));
                         if (adjacencyCounts[xyz + MulZ]++ == 0) extensionStack.Push((x, y, z + 1));
 
-                        count += CountExtensions(cellsToAdd);
+                        CountExtensions(cellsToAdd);
 
                         --adjacencyCounts[xyz - MulX];
                         --adjacencyCounts[xyz - MulY];
@@ -419,7 +428,6 @@ public class Program {
             }
             while (extensionStack.Count != originalLength)
                 extensionStack.Push(recoveryStack.Pop());
-            return count;
         }
     }
 
@@ -437,11 +445,12 @@ public class Program {
             HashSet<(int, int, int)> requiredCells = []; // note that x, y, z may be negative
             Stack<(int, int, int)> recoveryStack = new(), extensionStack = new();
             extensionStack.Push((N, N, 1));
-            return CountExtensions(N);
+            Num count = 0;
+            CountExtensions(N);
+            return count;
 
-            Num CountExtensions(int cellsToAdd) {
+            void CountExtensions(int cellsToAdd) {
                 cellsToAdd--;
-                Num count = 0;
                 int originalLength = extensionStack.Count;
                 while (extensionStack.Count > 0) {
                     int x, y, z; // x, y, z are always positive
@@ -477,7 +486,7 @@ public class Program {
                             if ((*(b + MulY))++ == 0) extensionStack.Push((x, y + 1, z));
                             if ((*(b + MulZ))++ == 0) extensionStack.Push((x, y, z + 1));
 
-                            count += CountExtensions(cellsToAdd);
+                            CountExtensions(cellsToAdd);
 
                             --*(b - MulX);
                             --*(b - MulY);
@@ -508,7 +517,6 @@ public class Program {
                 }
                 while (extensionStack.Count != originalLength)
                     extensionStack.Push(recoveryStack.Pop());
-                return count;
             }
         }
     }
@@ -540,10 +548,11 @@ public class Program {
                 // last 1 due to edge case of initial polycube having no neighbours
                 *i = 255;
 
-            return CountExtensions(N, refStack + 1, refStack + (N - 2) * 4);
+            Num count = 0;
+            CountExtensions(N, refStack + 1, refStack + (N - 2) * 4);
+            return count;
 
-            Num CountExtensions(int depth, byte** stackTop1, byte** stackTop2) {
-                Num count = 0;
+            void CountExtensions(int depth, byte** stackTop1, byte** stackTop2) {
                 byte** stackTopOriginal = stackTop1;
                 while (stackTop1 != refStack) {
                     byte* index = *--stackTop1;
@@ -607,7 +616,7 @@ public class Program {
                         }
                     } else if (depth != FilterDepth || stackTop1 - refStack == filter)
                         // if multithreading is not wanted, remove "if (condition)" from this else statement
-                        count += CountExtensions(depth - 1, stackTopInner, stackTop2);
+                        CountExtensions(depth - 1, stackTopInner, stackTop2);
 
                     --*(index - X);
                     --*(index - Y);
@@ -621,7 +630,6 @@ public class Program {
                 }
                 while (stackTop1 != stackTopOriginal)
                     *stackTop1++ = *stackTop2++;
-                return count;
             }
         }
     }
@@ -640,10 +648,11 @@ public class Program {
         // seeded with first index of the byte board as the only allowed extension
         refStack[0] = Z;
 
-        return CountExtensions(N, 1, refStack.Length);
+        Num count = 0;
+        CountExtensions(N, 1, refStack.Length);
+        return count;
 
-        Num CountExtensions(int depth, int stackPtr, int stackLimit) {
-            Num count = 0;
+        void CountExtensions(int depth, int stackPtr, int stackLimit) {
             int stackTopOriginal = stackPtr;
             while (stackPtr != 0) {
                 int index = refStack[--stackPtr];
@@ -709,7 +718,7 @@ public class Program {
                     }
                 } else if (depth != FilterDepth || stackPtr == filter) {
                     // if multithreading is not wanted, remove "if (condition)" from this else statement
-                    count += CountExtensions(depth - 1, stackTopInner, stackLimit);
+                    CountExtensions(depth - 1, stackTopInner, stackLimit);
                 }
 
                 --byteBoard[index - X];
@@ -727,7 +736,6 @@ public class Program {
             while (stackPtr != stackTopOriginal) {
                 refStack[stackPtr++] = refStack[stackLimit++];
             }
-            return count;
         }
     }
 
@@ -748,10 +756,12 @@ public class Program {
             // seeded with first index of the byte board as the only allowed extension
             refStack[0] = byteBoard + Z;
 
-            return CountExtensions(filter, N, refStack, 1, (N - 2) * 4);
+            Num count = 0;
+            int stackLimit = (N - 2) * 4;
+            CountExtensions(N, 1);
+            return count;
 
-            static Num CountExtensions(int filter, int depth, byte** refStack, int stackPtr, int stackLimit) {
-                Num count = 0;
+            void CountExtensions(int depth, int stackPtr) {
                 int stackTopOriginal = stackPtr;
                 while (stackPtr != 0) {
                     byte* j = refStack[--stackPtr];
@@ -815,7 +825,7 @@ public class Program {
                         }
                     } else if (depth != FilterDepth || stackPtr == filter) {
                         // if multithreading is not wanted, remove "if (condition)" from this else statement
-                        count += CountExtensions(filter, depth - 1, refStack, stackTopInner, stackLimit);
+                        CountExtensions(depth - 1, stackTopInner);
                     }
 
                     --*(j - X);
@@ -833,7 +843,6 @@ public class Program {
                 while (stackPtr != stackTopOriginal) {
                     refStack[stackPtr++] = refStack[stackLimit++];
                 }
-                return count;
             }
         }
     }

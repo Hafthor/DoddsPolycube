@@ -437,12 +437,9 @@ public class Program {
             HashSet<(int, int, int)> requiredCells = []; // note that x, y, z may be negative
             Stack<(int, int, int)> recoveryStack = new(), extensionStack = new();
             extensionStack.Push((N, N, 1));
-            return CountExtensions(N, linearMap, affineShift, adjacencyCounts,
-                requiredCells, recoveryStack, extensionStack);
+            return CountExtensions(N);
 
-            Num CountExtensions(int cellsToAdd, int[] linearMap, int[] affineShift,
-                byte* adjacencyCounts, HashSet<(int, int, int)> requiredCells,
-                Stack<(int, int, int)> recoveryStack, Stack<(int, int, int)> extensionStack) {
+            Num CountExtensions(int cellsToAdd) {
                 cellsToAdd--;
                 Num count = 0;
                 int originalLength = extensionStack.Count;
@@ -480,8 +477,7 @@ public class Program {
                             if ((*(b + MulY))++ == 0) extensionStack.Push((x, y + 1, z));
                             if ((*(b + MulZ))++ == 0) extensionStack.Push((x, y, z + 1));
 
-                            count += CountExtensions(cellsToAdd, linearMap, affineShift, adjacencyCounts,
-                                requiredCells, recoveryStack, extensionStack);
+                            count += CountExtensions(cellsToAdd);
 
                             --*(b - MulX);
                             --*(b - MulY);

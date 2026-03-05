@@ -50,12 +50,12 @@ using System.Diagnostics;
 // using System.Numerics; // for BigInteger
 
 [MemoryDiagnoser(false)]
-public class Program {
+public partial class Program {
     // we specify N as a constant because it makes the program run slightly faster 
     private const int N = 16; // number of polycube cells. Need N >= 6 and > FilterDepth 
 
     // make sure type Num is big enough for a(N) * 24
-    private const int FilterDepth = 5; // >=5 && <N
+    private const int FilterDepth = 8; // >=5 && <N - sweet spot for performance
 
     // this is the maximum left stack length, which is the value being filtered to separate work
     private const int MaxLeftStackLen = 4 * (N - FilterDepth) - 2;
@@ -82,10 +82,13 @@ public class Program {
     
     [Benchmark] // No .NET 8 measurement, 10.547s 3.82KB, 10.568s 0B
     public int BenchmarkTrivialStack() => Main([..BenchmarkArgs, "--usestack", "0"]);
+
+    [Benchmark]
+    public int BenchmarkTrivialAllFilters() => Main([..BenchmarkArgs, "--usesimd"]);
     
     // C version ran in 6.29s (15% faster) 
 
-    public static bool quiting = false, noLoad = false;
+    public static bool quiting = false, noLoad = false, checkpointLog = false;
 
     private static int Main(string[] args) {
         if (args is ["--benchmark"]) {
@@ -125,7 +128,7 @@ public class Program {
            total count for nontrivial symmetries is 8,460,765 for polycubes with 16 cells - Elapsed: 00:01:56.8297006
          */
 
-        Func<int, Num> countExtensionsSubset = CountExtensionsSubsetUnsafe;
+        Func<int, Num> countExtensionsSubset = CountExtensionsSubsetUnsafe2;
         Func<int[], int[], Num> countSymmetricPolycubes = CountSymmetricPolycubes;
         HashSet<string> include = [..args];
         bool extraQuiet = include.Remove("--benchmark");
@@ -160,6 +163,48 @@ public class Program {
         if (showHelp)
             Console.WriteLine("--usestack to use stack instead of recursion for non-trivial symmetries (slower).");
 
+        bool useSimd = include.Remove("--usesimd");
+        if (showHelp)
+            Console.WriteLine("--usesimd for single-pass all-filter computation (no redundant work above FilterDepth).");
+
+        bool useSimd2 = include.Remove("--usesimd2");
+        if (showHelp)
+            Console.WriteLine("--usesimd2 same as --usesimd (alias).");
+
+        bool useCheckpoint = include.Remove("--checkpoint");
+        if (showHelp)
+            Console.WriteLine("--checkpoint for checkpointed single-pass mode (survives restarts, best for large N).");
+
+        bool useTwoPhase = include.Remove("--twophase");
+        if (showHelp)
+            Console.WriteLine("--twophase for two-phase mode: single-threaded precalc + parallel unsafe dispatch.");
+
+        bool useFastCheckpoint = include.Remove("--fastcheckpoint");
+        if (showHelp)
+            Console.WriteLine("--fastcheckpoint for checkpointed mode with unsafe inner path (best for large N).");
+
+        bool useWork5 = include.Remove("--work5");
+        if (showHelp)
+            Console.WriteLine("--work5 for checkpointed mode with Work5 inline base case (fastest for large N).");
+
+        bool fdAnalysis = include.Remove("--fdanalysis");
+        if (showHelp)
+            Console.WriteLine("--fdanalysis to print FilterDepth analysis table for the current N.");
+
+        bool fdBenchmark = include.Remove("--fdbenchmark");
+        if (showHelp)
+            Console.WriteLine("--fdbenchmark to benchmark all FilterDepth values (full run, best for small N).");
+
+        bool fdQuick = include.Remove("--fdquick");
+        if (showHelp)
+            Console.WriteLine("--fdquick to benchmark all FilterDepth values (filter 0 only, good for large N).");
+        
+        bool measureDupes = include.Remove("--duplicates");
+        if (showHelp)
+            Console.WriteLine("--duplicates to measure duplicate board states (cache potential analysis).");
+        
+        bool useAll = useSimd || useSimd2 || useCheckpoint || useTwoPhase || useFastCheckpoint || useWork5;
+
         noLoad = include.Remove("--noload");
         if (showHelp)
             Console.WriteLine("--noload to not load prior work.");
@@ -167,6 +212,11 @@ public class Program {
         bool noSave = include.Remove("--nosave");
         if (showHelp)
             Console.WriteLine("--nosave to not save new work.");
+
+        bool checkpointLog = include.Remove("--checkpointlog");
+        if (showHelp)
+            Console.WriteLine("--checkpointlog to append to a checkpoint log file on each checkpoint save.");
+        Program.checkpointLog = checkpointLog;
 
         bool quiet = include.Remove("--quiet") || extraQuiet;
         if (showHelp)
@@ -184,6 +234,22 @@ public class Program {
         
         if (help)
             return 0;
+        
+        if (fdAnalysis) {
+            PrintFilterDepthAnalysis(maxDop);
+            return 0;
+        }
+        
+        if (fdBenchmark || fdQuick) {
+            RunFilterDepthBenchmark(maxDop, fdQuick);
+            return 0;
+        }
+
+        if (measureDupes) {
+            MeasureDuplicates();
+            return 0;
+        }
+        
         if (showHelp)
             Console.WriteLine();
 
@@ -307,81 +373,131 @@ public class Program {
                 if (quiting) return;
                 Console.WriteLine("saving and quiting... press Ctrl+C again to quit w/o saving. " +
                     "Note the times will be incorrect when you resume.");
+                Console.Write("\e[?25h"); // show cursor
                 eventArgs.Cancel = true;
                 quiting = true;
             };
         }
+        try { // try/finally block to ensure cursor is shown
+            Console.Write("\e[?25l"); // hide cursor
+            if (!extraQuiet) Console.WriteLine("Phase 2/2: trivial symmetries");
+            var sw2 = Stopwatch.StartNew();
 
-        if (!extraQuiet) Console.WriteLine("Phase 2/2: trivial symmetries");
-        var sw2 = Stopwatch.StartNew();
-        List<Action> tasks2 = [];
-        Num subCount2 = 0;
-        var cpuTime = TimeSpan.Zero;
-        int running2 = 0;
-        for (int j = 0, completed = 0; j <= MaxLeftStackLen; j++) {
-            if (include.Count != 0 && !include.Contains("" + j)) continue;
-            var filename = $"trivial_{N}_{MaxLeftStackLen}_{j}.txt";
-            if (!noLoad && File.Exists(filename)) {
-                var lines = File.ReadAllLines(filename);
-                var line0 = lines[0].Split(' ');
-                subCount2 += Num.Parse(line0[0]);
-                cpuTime += TimeSpan.Parse(line0[1]);
-                for (int i = 1; i < lines.Length; i++)
-                    if (!extraQuiet) Console.WriteLine(lines[i]);
+            if (useAll && include.Count == 0) {
+                // Parallel partitioned mode: split filters into numPaths groups, each group
+                // traverses the shared tree once and processes its assigned filters.
+                int numPaths = noMulti ? 1 : maxDop;
+                if (!noSave) {
+                    Console.CancelKeyPress += (_, eventArgs) => {
+                        if (quiting) return;
+                        Console.WriteLine("\nsaving and quiting... press Ctrl+C again to quit w/o saving.");
+                        eventArgs.Cancel = true;
+                        quiting = true;
+                    };
+                }
+                string modeName = useWork5 ? "work5" : useFastCheckpoint ? "fast-checkpointed" : useTwoPhase ? "two-phase" : useCheckpoint ? "checkpointed" : "partitioned";
+                if (!extraQuiet)
+                    Console.WriteLine($"Using {modeName} mode ({numPaths} paths) - start time: {DateTime.Now}");
+                var swCpu = Stopwatch.StartNew();
+                var allCounts = useWork5
+                    ? CountExtensionsSubsetCheckpointedWork5(numPaths, quiet, noSave, Program.noLoad)
+                    : useFastCheckpoint
+                        ? CountExtensionsSubsetCheckpointedFast(numPaths, quiet, noSave, Program.noLoad)
+                        : useTwoPhase
+                            ? CountExtensionsSubsetTwoPhase(numPaths, quiet, noSave, Program.noLoad)
+                            : useCheckpoint
+                                ? CountExtensionsSubsetCheckpointed(numPaths, quiet, noSave, Program.noLoad)
+                                : CountExtensionsSubsetAllFiltersParallel(numPaths, quiet, noSave, Program.noLoad);
+                swCpu.Stop();
+                Num subCount2 = 0;
+                for (int j = 0; j <= MaxLeftStackLen; j++) {
+                    subCount2 += allCounts[j];
+                    if (!quiet)
+                        Console.WriteLine($"  #{j} count={allCounts[j]:N0}");
+                }
+                if (!extraQuiet)
+                    Console.WriteLine($"{subCount2:N0} polycubes with {
+                        N} cells (number of polycubes fixed by trivial symmetry) - Elapsed: {sw2.Elapsed}, CPU time: {
+                            swCpu.Elapsed}");
+                totalCount += subCount2;
             } else {
-                int filter = j; // copy, since lambda expression captures the variable
-                tasks2.Add(() => {
-                    Interlocked.Increment(ref running2);
-                    if (!quiet) Console.Write($"{running2} \r");
-                    var swCpu = Stopwatch.StartNew();
-                    var count = countExtensionsSubset(filter);
-                    swCpu.Stop();
-                    lock (tasks2) {
-                        completed++;
-                        subCount2 += count;
-                        cpuTime += swCpu.Elapsed;
+                List<Action> tasks2 = [];
+                Num subCount2 = 0;
+                var cpuTime = TimeSpan.Zero;
+                int running2 = 0;
+                for (int j = 0, completed = 0; j <= MaxLeftStackLen; j++) {
+                    if (include.Count != 0 && !include.Contains("" + j)) continue;
+                    var filename = $"trivial_{N}_{MaxLeftStackLen}_{j}.txt";
+                    if (!noLoad && File.Exists(filename)) {
+                        var lines = File.ReadAllLines(filename);
+                        var line0 = lines[0].Split(' ');
+                        subCount2 += Num.Parse(line0[0]);
+                        cpuTime += TimeSpan.Parse(line0[1]);
+                        for (int i = 1; i < lines.Length; i++)
+                            if (!extraQuiet)
+                                Console.WriteLine(lines[i]);
+                    } else {
+                        int filter = j; // copy, since lambda expression captures the variable
+                        tasks2.Add(() => {
+                            Interlocked.Increment(ref running2);
+                            if (!quiet) Console.Write($"{running2} \r");
+                            var swCpu = Stopwatch.StartNew();
+                            var count = countExtensionsSubset(filter);
+                            swCpu.Stop();
+                            lock (tasks2) {
+                                completed++;
+                                subCount2 += count;
+                                cpuTime += swCpu.Elapsed;
+                            }
+                            Interlocked.Decrement(ref running2);
+                            if (!quiting) {
+                                var s =
+                                    $"[{completed}/{tasks2.Count}] #{filter} count={count:N0} elapsed={swCpu.Elapsed}";
+                                if (!quiet) Console.WriteLine(s);
+                                if (!noSave)
+                                    File.WriteAllText(filename, $"{count} {swCpu.Elapsed}{Environment.NewLine}" + s);
+                                if (!quiet) Console.Write($"{running2} \r");
+                            }
+                        });
                     }
-                    Interlocked.Decrement(ref running2);
-                    if (!quiting) {
-                        var s = $"[{completed}/{tasks2.Count}] #{filter} count={count:N0} elapsed={swCpu.Elapsed}";
-                        if (!quiet) Console.WriteLine(s);
-                        if (!noSave) File.WriteAllText(filename, $"{count} {swCpu.Elapsed}{Environment.NewLine}" + s);
-                        if (!quiet) Console.Write($"{running2} \r");
-                    }
-                });
+                }
+
+                if (!extraQuiet) Console.WriteLine($"Starting {tasks2.Count} tasks - start time: {DateTime.Now}");
+
+                if (noMulti)
+                    foreach (var task in tasks2)
+                        task();
+                else
+                    Parallel.Invoke(new ParallelOptions { MaxDegreeOfParallelism = maxDop },
+                        tasks2.ToArray());
+
+                if (!quiting) {
+                    if (!extraQuiet)
+                        Console.WriteLine($"{subCount2:N0} polycubes with {
+                            N} cells (number of polycubes fixed by trivial symmetry) - Elapsed: {sw2.Elapsed}, CPU time: {
+                                cpuTime}");
+
+                    totalCount += subCount2;
+                }
+            } // end else (per-filter mode)
+
+            if (!quiting) {
+                var done = $"Done - end time: {DateTime.Now}";
+                if (include.Count == 0) {
+                    if (!extraQuiet) Console.WriteLine();
+                    totalCount /= 24;
+                    var s = $"{totalCount:N0} free polycubes with {N} cells - Elapsed: {swTotal.Elapsed}";
+                    if (!extraQuiet) Console.WriteLine(s);
+                    var filename = $"summary_{N}.txt";
+                    if (!noSave)
+                        File.WriteAllText(filename, $"{totalCount} {swTotal.Elapsed}{Environment.NewLine}{s}{
+                            Environment.NewLine}{done}");
+                }
+
+                if (!extraQuiet) Console.WriteLine(done);
             }
-        }
-
-        if (!extraQuiet) Console.WriteLine($"Starting {tasks2.Count} tasks - start time: {DateTime.Now}");
-
-        if (noMulti)
-            foreach (var task in tasks2)
-                task();
-        else
-            Parallel.Invoke(new ParallelOptions { MaxDegreeOfParallelism = maxDop },
-                tasks2.ToArray());
-
-        if (!quiting) {
-            if (!extraQuiet)
-                Console.WriteLine($"{subCount2:N0} polycubes with {
-                    N} cells (number of polycubes fixed by trivial symmetry) - Elapsed: {sw2.Elapsed}, CPU time: {
-                    cpuTime}");
-
-            totalCount += subCount2;
-
-            var done = $"Done - end time: {DateTime.Now}";
-            if (include.Count == 0) {
-                if (!extraQuiet) Console.WriteLine();
-                totalCount /= 24;
-                var s = $"{totalCount:N0} free polycubes with {N} cells - Elapsed: {swTotal.Elapsed}";
-                if (!extraQuiet) Console.WriteLine(s);
-                var filename = $"summary_{N}.txt";
-                if (!noSave)
-                    File.WriteAllText(filename, $"{totalCount} {swTotal.Elapsed}{Environment.NewLine}{s}{
-                        Environment.NewLine}{done}");
-            }
-
-            if (!extraQuiet) Console.WriteLine(done);
+        } finally {
+            Console.Write("\e[?25h"); // show cursor
         }
         return extraQuiet ? (int)totalCount : 0;
     }

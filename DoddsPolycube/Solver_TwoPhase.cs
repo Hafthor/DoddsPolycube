@@ -38,15 +38,15 @@ public partial class Program {
     /// <summary>
     /// Two-phase approach: single-threaded shared tree + parallel filter dispatch.
     /// </summary>
-    private static Num[] CountExtensionsSubsetTwoPhase(int numPaths,
-        bool quiet, bool noSave, bool skipLoad) {
+    private static Num CountExtensionsTwoPhase(int filter) {
+        if (filter != 0) return 0;
         int totalFilters = MaxLeftStackLen + 1;
         Num[] counts = new Num[totalFilters];
 
         // Load previously completed filter results
         int loadedCount = 0;
         HashSet<int> alreadyDone = [];
-        if (!skipLoad) {
+        if (!noLoad) {
             for (int f = 0; f < totalFilters; f++) {
                 var filename = $"trivial_{N}_{MaxLeftStackLen}_{f}.txt";
                 if (File.Exists(filename)) {
@@ -65,7 +65,11 @@ public partial class Program {
         if (loadedCount > 0 && !quiet)
             Console.WriteLine($"  loaded {loadedCount} previously saved filter results");
 
-        if (alreadyDone.Count == totalFilters || quiting) return counts;
+        Num total = 0;
+        if (alreadyDone.Count == totalFilters || quiting) {
+            foreach (Num count in counts) total += count;
+            return total;
+        }
 
         // ---- Phase A: single-threaded shared tree traversal ----
         // Choose split depth: lower = more work items (finer parallelism).
@@ -79,7 +83,10 @@ public partial class Program {
         var workItems = CollectWorkItems(splitDepth, quiet);
         swA.Stop();
 
-        if (quiting) return counts;
+        if (quiting) {
+            foreach (Num count in counts) total += count;
+            return total;
+        }
         if (!quiet)
             Console.WriteLine($"\r  Phase A complete: {workItems.Count:N0} work items in {swA.Elapsed:hh\\:mm\\:ss}    ");
 
@@ -139,7 +146,9 @@ public partial class Program {
             }
         }
 
-        return counts;
+        total = 0;
+        foreach (Num count in counts) total += count;
+        return total;
     }
 
     /// <summary>

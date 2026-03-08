@@ -42,7 +42,7 @@ public partial class Program {
     /// dispatch them in parallel. In practice, the JIT and OoO engine already achieve this.
     /// Performance: within noise of baseline (~6.3s).
     /// </summary>
-    private static unsafe Num CountExtensionsSubsetSimd(int filter) {
+    private static unsafe Num CountExtensionsSubsetBranchPreload(int filter) {
         if (quiting) return 0;
         byte* byteBoard = stackalloc byte[(N + 2) * Z];
         byte** refStack = stackalloc byte*[(N - 2) * 4];

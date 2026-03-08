@@ -1,5 +1,4 @@
 ﻿using System.Diagnostics.Contracts;
-using System.Runtime.CompilerServices;
 using System.Text;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Running;
@@ -55,7 +54,7 @@ public partial class Program {
     private const int N = 16; // number of polycube cells. Need N >= 6 and > FilterDepth 
 
     // make sure type Num is big enough for a(N) * 24
-    private const int FilterDepth = 8; // >=5 && <N - sweet spot for performance
+    private const int FilterDepth = 5; // >=5 && <N - sweet spot for performance should be N/2
 
     // this is the maximum left stack length, which is the value being filtered to separate work
     private const int MaxLeftStackLen = 4 * (N - FilterDepth) - 2;
@@ -88,7 +87,8 @@ public partial class Program {
     
     // C version ran in 6.29s (15% faster) 
 
-    public static bool quiting = false, noLoad = false, checkpointLog = false;
+    public static bool quiting = false, noLoad = false, noSave = false, checkpointLog = false, quiet = false;
+    public static int numPaths = 0;
 
     private static int Main(string[] args) {
         if (args is ["--benchmark"]) {
@@ -128,7 +128,7 @@ public partial class Program {
            total count for nontrivial symmetries is 8,460,765 for polycubes with 16 cells - Elapsed: 00:01:56.8297006
          */
 
-        Func<int, Num> countExtensionsSubset = CountExtensionsSubsetUnsafe2;
+        Func<int, Num> countExtensionsMethod = CountExtensionsSubsetUnsafe;
         Func<int[], int[], Num> countSymmetricPolycubes = CountSymmetricPolycubes;
         HashSet<string> include = [..args];
         bool extraQuiet = include.Remove("--benchmark");
@@ -143,82 +143,65 @@ public partial class Program {
             Console.WriteLine($"You can specify which symmetries to include as arguments (0-{
                 MaxLeftStackLen}), -1 for non-trivial symmetries.");
 
-        bool useUnsafe = include.Remove("--useunsafe");
-        if (useUnsafe) countSymmetricPolycubes = CountSymmetricPolycubesUnsafe;
+        if (include.Remove("--useunsafe")) countSymmetricPolycubes = CountSymmetricPolycubesUnsafe;
         if (showHelp)
             Console.WriteLine("--useunsafe for unsafe method for non-trivial symmetries (not really faster).");
-
-        bool useSafe = include.Remove("--usesafe");
-        if (useSafe) countExtensionsSubset = CountExtensionsSubsetSafe;
+        
+        if (include.Remove("--usesafe")) countExtensionsMethod = CountExtensionsSubsetSafe;
         if (showHelp)
             Console.WriteLine("--usesafe for safe method for trivial symmetries (slower).");
 
-        bool useLessUnsafe = include.Remove("--uselessunsafe");
-        if (useLessUnsafe) countExtensionsSubset = CountExtensionsSubsetLessUnsafe;
+        if (include.Remove("--uselessunsafe")) countExtensionsMethod = CountExtensionsSubsetLessUnsafe;
         if (showHelp)
             Console.WriteLine("--uselessunsafe for a less unsafe method on trivial symmetries (a bit slower).");
 
-        bool useStack = include.Remove("--usestack");
-        if (useStack) countExtensionsSubset = CountExtensionsSubsetStack;
+        if (include.Remove("--usestack")) countExtensionsMethod = CountExtensionsSubsetStack;
         if (showHelp)
             Console.WriteLine("--usestack to use stack instead of recursion for non-trivial symmetries (slower).");
 
-        bool useSimd = include.Remove("--usesimd");
+        if (include.Remove("--usestackall")) countExtensionsMethod = CountExtensionsStackAll;
+        if (showHelp)
+            Console.WriteLine("--usestackall to use stack and compute count in one pass. (only filter=0 does anything)");
+
+        if (include.Remove("--usesimd")) countExtensionsMethod = CountExtensionsAllFiltersParallel;
         if (showHelp)
             Console.WriteLine("--usesimd for single-pass all-filter computation (no redundant work above FilterDepth).");
 
-        bool useSimd2 = include.Remove("--usesimd2");
-        if (showHelp)
-            Console.WriteLine("--usesimd2 same as --usesimd (alias).");
-
-        bool useCheckpoint = include.Remove("--checkpoint");
+        if (include.Remove("--checkpoint")) countExtensionsMethod = CountExtensionsCheckpointed;
         if (showHelp)
             Console.WriteLine("--checkpoint for checkpointed single-pass mode (survives restarts, best for large N).");
 
-        bool useTwoPhase = include.Remove("--twophase");
+        if (include.Remove("--twophase")) countExtensionsMethod = CountExtensionsTwoPhase;
         if (showHelp)
             Console.WriteLine("--twophase for two-phase mode: single-threaded precalc + parallel unsafe dispatch.");
 
-        bool useFastCheckpoint = include.Remove("--fastcheckpoint");
+        if (include.Remove("--fastcheckpoint")) countExtensionsMethod = CountExtensionsCheckpointedFast;
         if (showHelp)
             Console.WriteLine("--fastcheckpoint for checkpointed mode with unsafe inner path (best for large N).");
 
-        bool useWork5 = include.Remove("--work5");
+        if (include.Remove("--work5")) countExtensionsMethod = CountExtensionsCheckpointedWork5;
         if (showHelp)
             Console.WriteLine("--work5 for checkpointed mode with Work5 inline base case (fastest for large N).");
 
-        bool fdAnalysis = include.Remove("--fdanalysis");
+        if (include.Remove("--usebranchpreload")) countExtensionsMethod = CountExtensionsSubsetBranchPreload;
         if (showHelp)
-            Console.WriteLine("--fdanalysis to print FilterDepth analysis table for the current N.");
-
-        bool fdBenchmark = include.Remove("--fdbenchmark");
-        if (showHelp)
-            Console.WriteLine("--fdbenchmark to benchmark all FilterDepth values (full run, best for small N).");
-
-        bool fdQuick = include.Remove("--fdquick");
-        if (showHelp)
-            Console.WriteLine("--fdquick to benchmark all FilterDepth values (filter 0 only, good for large N).");
+            Console.WriteLine("--usebranchpreload to use unsafe branch preload experimental version (not really faster)");
         
-        bool measureDupes = include.Remove("--duplicates");
-        if (showHelp)
-            Console.WriteLine("--duplicates to measure duplicate board states (cache potential analysis).");
-        
-        bool useAll = useSimd || useSimd2 || useCheckpoint || useTwoPhase || useFastCheckpoint || useWork5;
+        bool useAll = !countExtensionsMethod.Method.Name.StartsWith("CountExtensionsSubset");
 
         noLoad = include.Remove("--noload");
         if (showHelp)
             Console.WriteLine("--noload to not load prior work.");
 
-        bool noSave = include.Remove("--nosave");
+        noSave = include.Remove("--nosave");
         if (showHelp)
             Console.WriteLine("--nosave to not save new work.");
 
-        bool checkpointLog = include.Remove("--checkpointlog");
+        checkpointLog = include.Remove("--checkpointlog");
         if (showHelp)
             Console.WriteLine("--checkpointlog to append to a checkpoint log file on each checkpoint save.");
-        Program.checkpointLog = checkpointLog;
 
-        bool quiet = include.Remove("--quiet") || extraQuiet;
+        quiet = include.Remove("--quiet") || extraQuiet;
         if (showHelp)
             Console.WriteLine("--quiet to not print progress.");
 
@@ -234,21 +217,6 @@ public partial class Program {
         
         if (help)
             return 0;
-        
-        if (fdAnalysis) {
-            PrintFilterDepthAnalysis(maxDop);
-            return 0;
-        }
-        
-        if (fdBenchmark || fdQuick) {
-            RunFilterDepthBenchmark(maxDop, fdQuick);
-            return 0;
-        }
-
-        if (measureDupes) {
-            MeasureDuplicates();
-            return 0;
-        }
         
         if (showHelp)
             Console.WriteLine();
@@ -368,7 +336,7 @@ public partial class Program {
             if (!extraQuiet) Console.WriteLine();
         }
 
-        if (!noSave && countExtensionsSubset == CountExtensionsSubsetStack) {
+        if (!noSave && countExtensionsMethod == CountExtensionsSubsetStack) {
             Console.CancelKeyPress += (_, eventArgs) => {
                 if (quiting) return;
                 Console.WriteLine("saving and quiting... press Ctrl+C again to quit w/o saving. " +
@@ -386,7 +354,7 @@ public partial class Program {
             if (useAll && include.Count == 0) {
                 // Parallel partitioned mode: split filters into numPaths groups, each group
                 // traverses the shared tree once and processes its assigned filters.
-                int numPaths = noMulti ? 1 : maxDop;
+                numPaths = noMulti ? 1 : maxDop;
                 if (!noSave) {
                     Console.CancelKeyPress += (_, eventArgs) => {
                         if (quiting) return;
@@ -395,26 +363,13 @@ public partial class Program {
                         quiting = true;
                     };
                 }
-                string modeName = useWork5 ? "work5" : useFastCheckpoint ? "fast-checkpointed" : useTwoPhase ? "two-phase" : useCheckpoint ? "checkpointed" : "partitioned";
+                string modeName = countExtensionsMethod.Method.Name;
                 if (!extraQuiet)
-                    Console.WriteLine($"Using {modeName} mode ({numPaths} paths) - start time: {DateTime.Now}");
+                    Console.WriteLine($"Using {modeName} method ({numPaths} paths) - start time: {DateTime.Now}");
                 var swCpu = Stopwatch.StartNew();
-                var allCounts = useWork5
-                    ? CountExtensionsSubsetCheckpointedWork5(numPaths, quiet, noSave, Program.noLoad)
-                    : useFastCheckpoint
-                        ? CountExtensionsSubsetCheckpointedFast(numPaths, quiet, noSave, Program.noLoad)
-                        : useTwoPhase
-                            ? CountExtensionsSubsetTwoPhase(numPaths, quiet, noSave, Program.noLoad)
-                            : useCheckpoint
-                                ? CountExtensionsSubsetCheckpointed(numPaths, quiet, noSave, Program.noLoad)
-                                : CountExtensionsSubsetAllFiltersParallel(numPaths, quiet, noSave, Program.noLoad);
+                var allCounts = countExtensionsMethod(0);
                 swCpu.Stop();
-                Num subCount2 = 0;
-                for (int j = 0; j <= MaxLeftStackLen; j++) {
-                    subCount2 += allCounts[j];
-                    if (!quiet)
-                        Console.WriteLine($"  #{j} count={allCounts[j]:N0}");
-                }
+                Num subCount2 = allCounts;
                 if (!extraQuiet)
                     Console.WriteLine($"{subCount2:N0} polycubes with {
                         N} cells (number of polycubes fixed by trivial symmetry) - Elapsed: {sw2.Elapsed}, CPU time: {
@@ -442,7 +397,7 @@ public partial class Program {
                             Interlocked.Increment(ref running2);
                             if (!quiet) Console.Write($"{running2} \r");
                             var swCpu = Stopwatch.StartNew();
-                            var count = countExtensionsSubset(filter);
+                            var count = countExtensionsMethod(filter);
                             swCpu.Stop();
                             lock (tasks2) {
                                 completed++;
@@ -1185,6 +1140,146 @@ public partial class Program {
         }
 
         if (File.Exists(progressName)) File.Delete(progressName);
+        return count;
+    }
+    
+    private static Num CountExtensionsStackAll(int filter) {
+        if (quiting || filter != 0) return 0;
+        
+        // could use ints or shorts as offsets to save memory, but it's faster to directly store the
+        // pointers to avoid adding pointer offsets at every lookup
+        Span<byte> byteBoard = stackalloc byte[(N + 2) * Z];
+        // the first Z + 1 bytes are disallowed extensions; first Z are less than the minimum,
+        // last 1 due to edge case of initial polycube having no neighbours
+        //byteBoard[..(Z + 1)].Fill(0);
+        byteBoard[(Z + 1)..].Fill(255);
+
+        // total length of the two stacks is at most 4n-9. One stack grows from the left, the other
+        // stack grows from the right
+        Span<int> refStack = stackalloc int[(N - 2) * 4];
+        // seeded with first index of the byte board as the only allowed extension
+        refStack[0] = Z;
+        
+        int callStackPtr = 0;
+        Span<int> callStack = stackalloc int[(N - 2) * 4];
+        
+        Num count = 0;
+        int depth = N, stackPtr = 1, stackTopOriginal = 1, stackLimit = refStack.Length, index = 0;
+        bool popping = false;
+        for (;;) {
+            bool looping = stackPtr != 0, skipUnwind = false;
+            if (!popping && looping) {
+                index = refStack[--stackPtr];
+
+                int stackTopInner = stackPtr;
+
+                if (++byteBoard[index - Z] == 0) refStack[stackTopInner++] = index - Z;
+                if (++byteBoard[index - Y] == 0) refStack[stackTopInner++] = index - Y;
+                if (++byteBoard[index - X] == 0) refStack[stackTopInner++] = index - X;
+                if (++byteBoard[index + X] == 0) refStack[stackTopInner++] = index + X;
+                if (++byteBoard[index + Y] == 0) refStack[stackTopInner++] = index + Y;
+                if (++byteBoard[index + Z] == 0) refStack[stackTopInner++] = index + Z;
+
+                if (depth == 4) {
+                    // Work
+                    int stackTop = stackTopInner,
+                        length = stackTopInner,
+                        stackTopTemp = stackTopInner,
+                        lengthPlus = (stackTopInner << 1) - 511;
+                    count += (Num)(length * (length - 1) * (length - 2) / 6);
+                    for (; stackTopTemp != 0;) {
+                        int i = refStack[--stackTopTemp], neighbours = 0, subCount = 128, localCount = 0, ii;
+                        byte v;
+                        if ((v = byteBoard[ii = i - Z]) > 127) {
+                            localCount += byteBoard[ii] = --v;
+                            subCount += byteBoard[ii - Z] + byteBoard[ii - X] + byteBoard[ii - Y] +
+                                        byteBoard[ii + X] + byteBoard[ii + Y];
+                            neighbours++;
+                        }
+                        if ((v = byteBoard[ii = i - Y]) > 127) {
+                            localCount += byteBoard[ii] = --v;
+                            subCount += byteBoard[ii - Y] + byteBoard[ii - X] + byteBoard[ii - Z] +
+                                        byteBoard[ii + X] + byteBoard[ii + Z];
+                            neighbours++;
+                        }
+                        if ((v = byteBoard[ii = i - X]) > 127) {
+                            localCount += byteBoard[ii] = --v;
+                            subCount += byteBoard[ii - X] + byteBoard[ii - Y] + byteBoard[ii - Z] +
+                                        byteBoard[ii + Y] + byteBoard[ii + Z];
+                            neighbours++;
+                        }
+                        if ((v = byteBoard[ii = i + X]) > 127) {
+                            localCount += byteBoard[ii] = --v;
+                            subCount += byteBoard[ii + X] + byteBoard[ii + Y] + byteBoard[ii + Z] +
+                                        byteBoard[ii - Y] + byteBoard[ii - Z];
+                            neighbours++;
+                        }
+                        if ((v = byteBoard[ii = i + Y]) > 127) {
+                            localCount += byteBoard[ii] = --v;
+                            subCount += byteBoard[ii + Y] + byteBoard[ii + X] + byteBoard[ii + Z] +
+                                        byteBoard[ii - X] + byteBoard[ii - Z];
+                            neighbours++;
+                        }
+                        if ((v = byteBoard[ii = i + Z]) > 127) {
+                            localCount += byteBoard[ii] = --v;
+                            subCount += byteBoard[ii + Z] + byteBoard[ii + X] + byteBoard[ii + Y] +
+                                        byteBoard[ii - X] + byteBoard[ii - Y];
+                            neighbours++;
+                        }
+                        count += (Num)localCount +
+                                 (Num)((subCount >> 8) + (neighbours * (neighbours + lengthPlus) >> 1));
+                    }
+                    while (stackTop != 0) {
+                        int i = refStack[--stackTop], ii;
+                        byteBoard[ii = i - Z] |= (byte)(byteBoard[ii] >> 4);
+                        byteBoard[ii = i - Y] |= (byte)(byteBoard[ii] >> 4);
+                        byteBoard[ii = i - X] |= (byte)(byteBoard[ii] >> 4);
+                        byteBoard[ii = i + X] |= (byte)(byteBoard[ii] >> 4);
+                        byteBoard[ii = i + Y] |= (byte)(byteBoard[ii] >> 4);
+                        byteBoard[ii = i + Z] |= (byte)(byteBoard[ii] >> 4);
+                    }
+                } else {
+                    // simulate recursive call
+                    callStack[callStackPtr++] = stackPtr;
+                    callStack[callStackPtr++] = stackLimit;
+                    callStack[callStackPtr++] = stackTopOriginal;
+                    callStack[callStackPtr++] = index;
+                    depth--;
+                    stackTopOriginal = stackPtr = stackTopInner;
+                    continue;
+                }
+            }
+            if (popping || looping) {
+                if (!skipUnwind) {
+                    // Unwind
+                    --byteBoard[index - Z];
+                    --byteBoard[index - Y];
+                    --byteBoard[index - X];
+                    --byteBoard[index + X];
+                    --byteBoard[index + Y];
+                    --byteBoard[index + Z];
+                }
+
+                // doing this push before the recursion would add one extra unnecessary element to the stack
+                // at each level of recursion
+                refStack[--stackLimit] = index;
+            }
+            popping = false;
+
+            if (stackPtr == 0) {
+                refStack[stackLimit..(stackLimit + stackTopOriginal)].CopyTo(refStack);
+
+                // simulate recursive call exit
+                if (callStackPtr == 0) break;
+                index = callStack[--callStackPtr];
+                stackTopOriginal = callStack[--callStackPtr];
+                stackLimit = callStack[--callStackPtr];
+                stackPtr = callStack[--callStackPtr];
+                depth++;
+                popping = true; // skip to unwinding
+            }
+        }
+
         return count;
     }
 }

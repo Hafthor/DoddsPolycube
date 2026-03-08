@@ -18,15 +18,15 @@ using Num = ulong;
 
 public partial class Program {
 
-    private static Num[] CountExtensionsSubsetCheckpointedFast(int numPaths,
-        bool quiet, bool noSave, bool skipLoad) {
+    private static Num CountExtensionsCheckpointedFast(int filter) {
+        if (filter != 0) return 0;
         int totalFilters = MaxLeftStackLen + 1;
         Num[] counts = new Num[totalFilters];
 
         // Load previously completed filter results
         int loadedCount = 0;
         HashSet<int> alreadyDone = [];
-        if (!skipLoad) {
+        if (!noLoad) {
             for (int f = 0; f < totalFilters; f++) {
                 var filename = $"trivial_{N}_{MaxLeftStackLen}_{f}.txt";
                 if (File.Exists(filename)) {
@@ -50,7 +50,11 @@ public partial class Program {
             if (!alreadyDone.Contains(f))
                 remaining.Add(f);
 
-        if (remaining.Count == 0 || quiting) return counts;
+        Num total = 0;
+        if (remaining.Count == 0 || quiting) {
+            foreach (Num count in counts) total += count;
+            return total;
+        }
 
         // Partition remaining filters into groups, interleaved for load balance
         int actualPaths = Math.Min(numPaths, remaining.Count);
@@ -92,13 +96,15 @@ public partial class Program {
         Parallel.Invoke(groups.Select((filterSet, pathIdx) => (Action)(() => {
             if (quiting) return;
             CheckpointedFastWorker(filterSet, pathIdx, actualPaths,
-                OnFilterComplete, noSave, skipLoad, quiet);
+                OnFilterComplete);
         })).ToArray());
 
         if (!quiet)
             Console.WriteLine($"\r  [{completedFilters}/{totalFilters}] elapsed={swProgress.Elapsed:hh\\:mm\\:ss}  ");
 
-        return counts;
+        total = 0;
+        foreach (Num count in counts) total += count;
+        return total;
     }
 
     /// <summary>
@@ -106,8 +112,7 @@ public partial class Program {
     /// </summary>
     private static void CheckpointedFastWorker(
         HashSet<int> filterSet, int pathIdx, int numPaths,
-        Action<int, Num> onFilterComplete,
-        bool noSave, bool skipLoad, bool quiet) {
+        Action<int, Num> onFilterComplete) {
         if (quiting) return;
 
         string checkpointName = $"checkpoint_{N}_fd{FilterDepth}_{numPaths}p_{pathIdx}.txt";
@@ -130,7 +135,7 @@ public partial class Program {
         bool popping = false;
 
         // Try to load checkpoint
-        if (!skipLoad && !quiting && File.Exists(checkpointName)) {
+        if (!noLoad && !quiting && File.Exists(checkpointName)) {
             try {
                 var lines = File.ReadAllLines(checkpointName);
                 int lineNo = 0;

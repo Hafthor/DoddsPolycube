@@ -22,15 +22,15 @@ public partial class Program {
     /// Loads previously saved filter results and skips them. Saves results per-filter
     /// as each path completes. Reports progress via shared counter.
     /// </summary>
-    private static Num[] CountExtensionsSubsetAllFiltersParallel(int numPaths,
-        bool quiet, bool noSave, bool skipLoad) {
+    private static Num CountExtensionsAllFiltersParallel(int filter) {
+        if (filter != 0) return 0;
         int totalFilters = MaxLeftStackLen + 1; // 0..42 = 43 filters
         Num[] counts = new Num[totalFilters];
 
         // Load previously saved results
         int loadedCount = 0;
         HashSet<int> alreadyDone = [];
-        if (!skipLoad) {
+        if (!noLoad) {
             for (int f = 0; f < totalFilters; f++) {
                 var filename = $"trivial_{N}_{MaxLeftStackLen}_{f}.txt";
                 if (File.Exists(filename)) {
@@ -57,8 +57,11 @@ public partial class Program {
             if (!alreadyDone.Contains(f))
                 remaining.Add(f);
 
-        if (remaining.Count == 0) return counts;
-        if (quiting) return counts;
+        Num total = 0;
+        if (remaining.Count == 0 || quiting) {
+            foreach (Num count in counts) total += count;
+            return total;
+        }
 
         // Partition remaining filters into numPaths groups, interleaved for load balance
         int actualPaths = Math.Min(numPaths, remaining.Count);
@@ -108,7 +111,8 @@ public partial class Program {
         if (!quiet)
             Console.WriteLine($"\r  [{completedFilters}/{totalFilters}] elapsed={swProgress.Elapsed:hh\\:mm\\:ss}  ");
 
-        return counts;
+        foreach (Num count in counts) total += count;
+        return total;
     }
 
     /// <summary>

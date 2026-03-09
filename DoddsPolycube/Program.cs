@@ -60,7 +60,7 @@ public partial class Program {
     private const int MaxLeftStackLen = 4 * (N - FilterDepth) - 2;
 
     private static readonly string[] BenchmarkArgs = ["--benchmark", "--nomulti", "--noload", "--nosave"];
-    
+
     // Benchmarks are run with N=16 and FilterDepth=5 and Num is ulong
     // OS=macOS Sequoia, CPU=M2 Max, .NET 8.0 64-bit, .NET 9.0 64-bit
 
@@ -78,13 +78,13 @@ public partial class Program {
 
     [Benchmark] // 7.359s 4.24KB (1.6% slower), 7.473s 3.82KB, 7.934s 0B
     public int BenchmarkTrivialLessUnsafe() => Main([..BenchmarkArgs, "--uselessunsafe", "0"]);
-    
+
     [Benchmark] // No .NET 8 measurement, 10.547s 3.82KB, 10.568s 0B
     public int BenchmarkTrivialStack() => Main([..BenchmarkArgs, "--usestack", "0"]);
 
     [Benchmark]
     public int BenchmarkTrivialAllFilters() => Main([..BenchmarkArgs, "--usesimd"]);
-    
+
     // C version ran in 6.29s (15% faster) 
 
     public static bool quiting = false, noLoad = false, noSave = false, checkpointLog = false, quiet = false;
@@ -97,7 +97,7 @@ public partial class Program {
             BenchmarkRunner.Run<Program>();
             return 0;
         }
-        
+
         if (N < 6) throw new InvalidOperationException("N must be at least 6");
         if (FilterDepth >= N) throw new InvalidOperationException("FilterDepth must be less than N");
         if (FilterDepth < 5) throw new InvalidOperationException("FilterDepth must be at least 5 for multithreading");
@@ -118,7 +118,8 @@ public partial class Program {
             "Int64" or "UInt64" => N <= 13,
             _ => false,
         };
-        if (numTypeTooBig) Console.WriteLine($"Warning: Num type ({numType}) is bigger than it needs to be for N ({N})");
+        if (numTypeTooBig)
+            Console.WriteLine($"Warning: Num type ({numType}) is bigger than it needs to be for N ({N})");
 
         /* n=16
            1,504,619 polycubes fixed under each orthogonal order 2 rotation - *3 = 4,513,857
@@ -146,10 +147,14 @@ public partial class Program {
         if (include.Remove("--useunsafe")) countSymmetricPolycubes = CountSymmetricPolycubesUnsafe;
         if (showHelp)
             Console.WriteLine("--useunsafe for unsafe method for non-trivial symmetries (not really faster).");
-        
+
         if (include.Remove("--usesafe")) countExtensionsMethod = CountExtensionsSubsetSafe;
         if (showHelp)
             Console.WriteLine("--usesafe for safe method for trivial symmetries (slower).");
+
+        if (include.Remove("--usesafeall")) countExtensionsMethod = CountExtensionsSafeAll;
+        if (showHelp)
+            Console.WriteLine("--usesafeall for safe method in one pass.");
 
         if (include.Remove("--uselessunsafe")) countExtensionsMethod = CountExtensionsSubsetLessUnsafe;
         if (showHelp)
@@ -161,11 +166,13 @@ public partial class Program {
 
         if (include.Remove("--usestackall")) countExtensionsMethod = CountExtensionsStackAll;
         if (showHelp)
-            Console.WriteLine("--usestackall to use stack and compute count in one pass. (only filter=0 does anything)");
+            Console.WriteLine(
+                "--usestackall to use stack and compute count in one pass. (only filter=0 does anything)");
 
         if (include.Remove("--usesimd")) countExtensionsMethod = CountExtensionsAllFiltersParallel;
         if (showHelp)
-            Console.WriteLine("--usesimd for single-pass all-filter computation (no redundant work above FilterDepth).");
+            Console.WriteLine(
+                "--usesimd for single-pass all-filter computation (no redundant work above FilterDepth).");
 
         if (include.Remove("--checkpoint")) countExtensionsMethod = CountExtensionsCheckpointed;
         if (showHelp)
@@ -185,8 +192,9 @@ public partial class Program {
 
         if (include.Remove("--usebranchpreload")) countExtensionsMethod = CountExtensionsSubsetBranchPreload;
         if (showHelp)
-            Console.WriteLine("--usebranchpreload to use unsafe branch preload experimental version (not really faster)");
-        
+            Console.WriteLine(
+                "--usebranchpreload to use unsafe branch preload experimental version (not really faster)");
+
         bool useAll = !countExtensionsMethod.Method.Name.StartsWith("CountExtensionsSubset");
 
         noLoad = include.Remove("--noload");
@@ -214,10 +222,10 @@ public partial class Program {
         include.Remove("-" + maxDop);
         if (showHelp)
             Console.WriteLine($"-n to specify the number of threads (default is {Environment.ProcessorCount}).");
-        
+
         if (help)
             return 0;
-        
+
         if (showHelp)
             Console.WriteLine();
 
@@ -245,7 +253,8 @@ public partial class Program {
                 totalCount = Num.Parse(line0[0]);
                 //var elapsed = TimeSpan.Parse(line0[1]);
                 for (int i = 1; i < lines.Length; i++)
-                    if (!extraQuiet) Console.WriteLine(lines[i]);
+                    if (!extraQuiet)
+                        Console.WriteLine(lines[i]);
             } else {
                 var sw = Stopwatch.StartNew();
                 string[] descriptions = [
@@ -340,7 +349,7 @@ public partial class Program {
             Console.CancelKeyPress += (_, eventArgs) => {
                 if (quiting) return;
                 Console.WriteLine("saving and quiting... press Ctrl+C again to quit w/o saving. " +
-                    "Note the times will be incorrect when you resume.");
+                                  "Note the times will be incorrect when you resume.");
                 Console.Write("\e[?25h"); // show cursor
                 eventArgs.Cancel = true;
                 quiting = true;
@@ -859,6 +868,166 @@ public partial class Program {
         }
     }
 
+    private static Num CountExtensionsSafeAll(int filter) {
+        if (quiting || filter != 0) return 0;
+        // could use ints or shorts as offsets to save memory, but it's faster to directly store the
+        // pointers to avoid adding pointer offsets at every lookup
+        byte[] byteBoard = new byte[(N + 2) * Z];
+        // the first Z + 1 bytes are disallowed extensions; first Z are less than the minimum,
+        // last 1 due to edge case of initial polycube having no neighbours
+        Array.Fill(byteBoard, (byte)255, Z + 1, byteBoard.Length - Z - 1);
+        
+        // total length of the two stacks is at most 4n-9. One stack grows from the left, the other
+        // stack grows from the right
+        int[] refStack = new int[(N - 2) * 4];
+        // seeded with first index of the byte board as the only allowed extension
+        refStack[0] = Z;
+
+        return CountExtensions(N, 1, refStack.Length);
+
+        Num CountExtensions(int depth, int stackPtr, int stackLimit) {
+            string depthIndent = new string(' ', (N - depth) * 2);
+            Console.WriteLine(
+                $"{depthIndent}CountExtensions(depth={depth}, stackPtr={stackPtr}, stackLimit={stackLimit})");
+
+            Num count = 0;
+            int stackTopOriginal = stackPtr;
+            while (stackPtr != 0) {
+                int index = refStack[--stackPtr];
+                int stackTopInner = stackPtr;
+
+                if (++byteBoard[index - X] == 0) refStack[stackTopInner++] = index - X;
+                if (++byteBoard[index - Y] == 0) refStack[stackTopInner++] = index - Y;
+                if (++byteBoard[index - Z] == 0) refStack[stackTopInner++] = index - Z;
+                if (++byteBoard[index + X] == 0) refStack[stackTopInner++] = index + X;
+                if (++byteBoard[index + Y] == 0) refStack[stackTopInner++] = index + Y;
+                if (++byteBoard[index + Z] == 0) refStack[stackTopInner++] = index + Z;
+                string newStuff = string.Join(",", refStack[stackPtr..stackTopInner]);
+                Console.WriteLine($"{depthIndent}refStack.pop={index}, wind pushes [{newStuff}]");
+
+                if (depth == 4) {
+                    int stackTop = stackTopInner,
+                        length = stackTopInner,
+                        stackTopTemp = stackTopInner,
+                        lengthPlus = (stackTopInner << 1) - 511;
+                    Num addCount = (Num)(length * (length - 1) * (length - 2) / 6);
+                    count += addCount;
+                    Console.WriteLine($"{depthIndent}count+={addCount} ={count}");
+                    for (; stackTopTemp != 0;) {
+                        int i = refStack[--stackTopTemp], neighbours = 0, subCount = 128, localCount = 0, ii;
+                        Console.Write($"{depthIndent}stack2.pop={i}");
+                        byte v;
+                        Console.Write($", [-X]={byteBoard[i - X]:X2}");
+                        if ((v = byteBoard[ii = i - X]) > 127) {
+                            localCount += byteBoard[ii] = --v;
+                            Console.Write("--");
+                            subCount += byteBoard[ii - X] + byteBoard[ii - Y] + byteBoard[ii - Z] +
+                                        byteBoard[ii + Y] + byteBoard[ii + Z];
+                            neighbours++;
+                        }
+                        Console.Write($", [-Y]={byteBoard[i - Y]:X2}");
+                        if ((v = byteBoard[ii = i - Y]) > 127) {
+                            Console.Write("--");
+                            localCount += byteBoard[ii] = --v;
+                            subCount += byteBoard[ii - Y] + byteBoard[ii - X] + byteBoard[ii - Z] +
+                                        byteBoard[ii + X] + byteBoard[ii + Z];
+                            neighbours++;
+                        }
+                        Console.Write($", [-Z]={byteBoard[i - Z]:X2}");
+                        if ((v = byteBoard[ii = i - Z]) > 127) {
+                            Console.Write("--");
+                            localCount += byteBoard[ii] = --v;
+                            subCount += byteBoard[ii - Z] + byteBoard[ii - X] + byteBoard[ii - Y] +
+                                        byteBoard[ii + X] + byteBoard[ii + Y];
+                            neighbours++;
+                        }
+                        Console.Write($", [+X]={byteBoard[i + X]:X2}");
+                        if ((v = byteBoard[ii = i + X]) > 127) {
+                            Console.Write("--");
+                            localCount += byteBoard[ii] = --v;
+                            subCount += byteBoard[ii + X] + byteBoard[ii + Y] + byteBoard[ii + Z] +
+                                        byteBoard[ii - Y] + byteBoard[ii - Z];
+                            neighbours++;
+                        }
+                        Console.Write($", [+Y]={byteBoard[i + Y]:X2}");
+                        if ((v = byteBoard[ii = i + Y]) > 127) {
+                            Console.Write("--");
+                            localCount += byteBoard[ii] = --v;
+                            subCount += byteBoard[ii + Y] + byteBoard[ii + X] + byteBoard[ii + Z] +
+                                        byteBoard[ii - X] + byteBoard[ii - Z];
+                            neighbours++;
+                        }
+                        Console.Write($", [+Z]={byteBoard[i + Z]:X2}");
+                        if ((v = byteBoard[i + Z]) > 127) {
+                            Console.Write("--");
+                            localCount += byteBoard[ii = i + Z] = --v;
+                            subCount += byteBoard[ii + Z] + byteBoard[ii + X] + byteBoard[ii + Y] +
+                                        byteBoard[ii - X] + byteBoard[ii - Y];
+                            neighbours++;
+                        }
+
+                        addCount = (Num)localCount +
+                                   (Num)((subCount >> 8) + (neighbours * (neighbours + lengthPlus) >> 1));
+                        count += addCount;
+                        Console.WriteLine(
+                            $", subCount={subCount}, localCount={localCount}, neighbours={neighbours}, +{addCount}={count}");
+                    }
+                    string magic = string.Join(",", refStack[..stackTop]);
+                    Console.WriteLine($"{depthIndent}Doing some magic on each direction from [{magic}]:");
+                    while (stackTop != 0) {
+                        int i = refStack[--stackTop], ii;
+                        byte ob;
+                        Console.Write($"{depthIndent}i={i}: [-X]={ob = byteBoard[i - X]:X2}");
+                        byteBoard[ii = i - X] |= (byte)(byteBoard[ii] >> 4);
+                        if (ob != byteBoard[ii]) Console.Write($"->{byteBoard[ii]:X2}");
+                        
+                        Console.Write($", [-Y]={ob = byteBoard[i - Y]:X2}");
+                        byteBoard[ii = i - Y] |= (byte)(byteBoard[ii] >> 4);
+                        if (ob != byteBoard[ii]) Console.Write($"->{byteBoard[ii]:X2}");
+                        
+                        Console.Write($", [-Z]={ob = byteBoard[i - Z]:X2}");
+                        byteBoard[ii = i - Z] |= (byte)(byteBoard[ii] >> 4);
+                        if (ob != byteBoard[ii]) Console.Write($"->{byteBoard[ii]:X2}");
+                        
+                        Console.Write($", [+X]={ob = byteBoard[i + X]:X2}");
+                        byteBoard[ii = i + X] |= (byte)(byteBoard[ii] >> 4);
+                        if (ob != byteBoard[ii]) Console.Write($"->{byteBoard[ii]:X2}");
+                        
+                        Console.Write($", [+Y]={ob = byteBoard[i + Y]:X2}");
+                        byteBoard[ii = i + Y] |= (byte)(byteBoard[ii] >> 4);
+                        if (ob != byteBoard[ii]) Console.Write($"->{byteBoard[ii]:X2}");
+                        
+                        Console.Write($", [+Z]={ob = byteBoard[i + Z]:X2}");
+                        byteBoard[ii = i + Z] |= (byte)(byteBoard[ii] >> 4);
+                        if (ob != byteBoard[ii]) Console.Write($"->{byteBoard[ii]:X2}");
+                        Console.WriteLine();
+                    }
+                } else {
+                    // if multithreading is not wanted, remove "if (condition)" from this else statement
+                    count += CountExtensions(depth - 1, stackTopInner, stackLimit);
+                }
+
+                Console.WriteLine($"{depthIndent}Unwinding for {index}");
+                --byteBoard[index - X];
+                --byteBoard[index - Y];
+                --byteBoard[index - Z];
+                --byteBoard[index + X];
+                --byteBoard[index + Y];
+                --byteBoard[index + Z];
+
+                // doing this push before the recursion would add one extra unnecessary element to the stack
+                // at each level of recursion
+                refStack[--stackLimit] = index;
+            }
+
+            while (stackPtr != stackTopOriginal)
+                refStack[stackPtr++] = refStack[stackLimit++];
+            string s1 = string.Join(",", refStack[..stackPtr]), s2 = string.Join(",", refStack[stackLimit..]);
+            Console.WriteLine($"{depthIndent}Moved {stackPtr} items, stack=[{s1}], stack2=[{s2}], returning {count}");
+            return count;
+        }
+    }
+
     private static unsafe Num CountExtensionsSubsetLessUnsafe(int filter) {
         if (quiting) return 0;
         // could use ints or shorts as offsets to save memory, but it's faster to directly store the
@@ -968,11 +1137,11 @@ public partial class Program {
             return count;
         }
     }
-    
+
     private static Num CountExtensionsSubsetStack(int filter) {
         if (quiting) return 0;
         string progressName = $"progress_{N}_{filter}.txt";
-        
+
         // could use ints or shorts as offsets to save memory, but it's faster to directly store the
         // pointers to avoid adding pointer offsets at every lookup
         Span<byte> byteBoard = stackalloc byte[(N + 2) * Z];
@@ -986,10 +1155,10 @@ public partial class Program {
         Span<int> refStack = stackalloc int[(N - 2) * 4];
         // seeded with first index of the byte board as the only allowed extension
         refStack[0] = Z;
-        
+
         int callStackPtr = 0;
         Span<int> callStack = stackalloc int[(N - 2) * 4];
-        
+
         Num count = 0;
         int depth = N, stackPtr = 1, stackTopOriginal = 1, stackLimit = refStack.Length, index = 0;
         bool popping = false;
@@ -1142,10 +1311,10 @@ public partial class Program {
         if (File.Exists(progressName)) File.Delete(progressName);
         return count;
     }
-    
+
     private static Num CountExtensionsStackAll(int filter) {
         if (quiting || filter != 0) return 0;
-        
+
         // could use ints or shorts as offsets to save memory, but it's faster to directly store the
         // pointers to avoid adding pointer offsets at every lookup
         Span<byte> byteBoard = stackalloc byte[(N + 2) * Z];
@@ -1159,10 +1328,10 @@ public partial class Program {
         Span<int> refStack = stackalloc int[(N - 2) * 4];
         // seeded with first index of the byte board as the only allowed extension
         refStack[0] = Z;
-        
+
         int callStackPtr = 0;
         Span<int> callStack = stackalloc int[(N - 2) * 4];
-        
+
         Num count = 0;
         int depth = N, stackPtr = 1, stackTopOriginal = 1, stackLimit = refStack.Length, index = 0;
         bool popping = false;
